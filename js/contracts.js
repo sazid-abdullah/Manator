@@ -133,3 +133,85 @@ function defaultContractFor(studentId, date) {
   const running = list.find(c => c.startDate <= date);
   return running ? running.id : list.length ? list[0].id : null;
 }
+
+// ── Money overview & savings goals ───────────────────────────
+const AVG_MONTH_DAYS = 30.44;
+
+function monthTotals(k) {
+  return {
+    inc: db.payments.filter(p => monthKey(p.date) === k).reduce((a, p) => a + (Number(p.amount) || 0), 0),
+    exp: db.expenses.filter(x => monthKey(x.date) === k).reduce((a, x) => a + (Number(x.amount) || 0), 0),
+  };
+}
+
+// Estimated fees per month from running contracts. Class-based contracts use the
+// student's weekly timetable, or their classes in the last 30 days if there's none.
+function expectedMonthlyFees(today) {
+  today = today || todayISO();
+  let total = 0, count = 0;
+  for (const c of db.contracts) {
+    const s = getStudent(c.studentId);
+    if (!s || s.active === false || c.startDate > today) continue;
+    if (c.status === 'ended' && (!c.endDate || c.endDate < today)) continue;
+    const n = Math.max(1, Number(c.cycleLength) || 1);
+    const fee = Number(c.fee) || 0;
+    let classes = 0;
+    if (c.cycleType === 'classes') {
+      const weekly = (s.schedule || []).length;
+      classes = weekly ? weekly * AVG_MONTH_DAYS / 7 : contractLessons(c, today).filter(l => l.date > addDays(today, -30)).length;
+    }
+    total += c.cycleType === 'months' ? fee / n : c.cycleType === 'days' ? fee * AVG_MONTH_DAYS / n : fee * classes / n;
+    count++;
+  }
+  return { total, count };
+}
+
+// Typical month = average of the last 3 full months that have records; falls back to
+// the current (partial) month for new users.
+function moneySnapshot(today) {
+  today = today || todayISO();
+  const cur = monthKey(today);
+  const history = [];
+  for (let i = 6; i >= 1; i--) {
+    const k = monthKey(addMonths(cur + '-01', -i));
+    history.push({ k, ...monthTotals(k) });
+  }
+  const current = { k: cur, ...monthTotals(cur) };
+  const recent = history.slice(-3).filter(x => x.inc || x.exp);
+  const basis = recent.length ? recent : [current];
+  const avgIncome = basis.reduce((a, x) => a + x.inc, 0) / basis.length;
+  const avgExpense = basis.reduce((a, x) => a + x.exp, 0) / basis.length;
+  const basisKeys = new Set(basis.map(x => x.k));
+  const expenseByCategory = {};
+  for (const x of db.expenses) {
+    if (basisKeys.has(monthKey(x.date))) expenseByCategory[x.category] = (expenseByCategory[x.category] || 0) + (Number(x.amount) || 0) / basis.length;
+  }
+  return {
+    today, history, current,
+    basisMonths: basis.map(x => x.k), basisPartial: !recent.length,
+    avgIncome, avgExpense, avgNet: avgIncome - avgExpense, expenseByCategory,
+    outstanding: allDues().reduce((a, x) => a + Math.max(0, x.st.balance), 0),
+    expected: expectedMonthlyFees(today),
+    activeStudents: db.students.filter(s => s.active !== false).length,
+  };
+}
+
+// status: done | on-track | short | open (no date) | past (date passed) | no-savings (net <= 0)
+function goalPlan(g, avgNet, today) {
+  today = today || todayISO();
+  const target = Number(g.target) || 0;
+  const saved = Number(g.saved) || 0;
+  const remaining = Math.max(0, target - saved);
+  const pct = target > 0 ? Math.min(1, saved / target) : 0;
+  if (!remaining) return { remaining, pct, status: 'done', perMonth: null, eta: null };
+  const daysLeft = g.targetDate ? daysBetween(today, g.targetDate) : null;
+  const monthsLeft = daysLeft == null ? null : daysLeft / AVG_MONTH_DAYS;
+  const perMonth = daysLeft == null || daysLeft <= 0 ? null : remaining / Math.max(1, monthsLeft);
+  const eta = avgNet > 0 ? addDays(today, Math.ceil(remaining / avgNet * AVG_MONTH_DAYS)) : null;
+  let status;
+  if (daysLeft != null && daysLeft <= 0) status = 'past';
+  else if (avgNet <= 0) status = 'no-savings';
+  else if (perMonth == null) status = 'open';
+  else status = perMonth <= avgNet + 0.005 ? 'on-track' : 'short';
+  return { remaining, pct, status, perMonth, eta, monthsLeft };
+}

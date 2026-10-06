@@ -13,6 +13,7 @@ function defaultState() {
     payments: [],
     expenses: [],
     docs: [],
+    goals: [],
   };
 }
 
@@ -61,6 +62,10 @@ const RECORD_SHAPES = {
     ...x, contractId: optStr(x.contractId), amount: num(x.amount), method: str(x.method, 50), note: str(x.note),
   },
   expenses: x => isDate(x.date) && { ...x, amount: num(x.amount), category: str(x.category, 100) || 'Other', note: str(x.note) },
+  goals: x => x.name && {
+    ...x, name: str(x.name, 200), target: num(x.target), saved: num(x.saved),
+    targetDate: isDate(x.targetDate) ? x.targetDate : undefined, note: str(x.note),
+  },
   docs: x => ({
     ...x, type: oneOf(x.type, ['plan', 'exam', 'worksheet'], 'exam'), title: str(x.title, 300) || 'Untitled', content: str(x.content, 2000000),
     studentId: optStr(x.studentId), createdAt: typeof x.createdAt === 'string' && !isNaN(Date.parse(x.createdAt)) ? x.createdAt : new Date().toISOString(),
