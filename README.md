@@ -5,7 +5,7 @@ Personal tuition manager: students, daily lesson log, fee contracts, money track
 - **Students** – class, board, subjects, guardian contact, weekly schedule.
 - **Classes** – log what you taught each day, homework, attendance (taught / absent / cancelled).
 - **Contracts** – a fee every N days, N months, or N classes, paid in advance or after the cycle. Shows what's due, overdue, and paid.
-- **Money** – payments, expenses, monthly income/net, who owes you, CSV export.
+- **Money** – payments, expenses, monthly income/net, who owes you, CSV export, savings goals (how much to save per month for a big purchase) and an optional AI money advisor that only sees totals, never names.
 - **AI** – lesson plans, exam papers (with separate answer key) and worksheets using free providers (or import papers you wrote in Word .docx / text): Google Gemini, Groq, OpenRouter free models, or local Ollama. Only class/subject/topics are sent; names, phone numbers and money never leave the device.
 - **Backup** – everything lives in your browser (`localStorage`). Download a backup file regularly and restore it on another device.
 

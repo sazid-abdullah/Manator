@@ -273,3 +273,9 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--a
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 0.92rem; }
 .kv dt { color: var(--muted); }
 .kv dd { overflow-wrap: anywhere; }
+
+details.sent { margin: 2px 0 4px; font-size: 0.85rem; }
+details.sent summary { cursor: pointer; color: var(--muted); }
+details.sent pre { white-space: pre-wrap; background: var(--card2); padding: 10px 12px; border-radius: 10px; max-height: 280px; overflow: auto; font-size: 0.8rem; margin: 8px 0 0; }
+.money-chips { margin: 8px 0; }
+.money-chips .btn { white-space: normal; text-align: left; height: auto; }

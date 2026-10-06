@@ -221,3 +221,39 @@ function splitAnswerKey(md) {
   if (!m) return { paper: md, answers: '' };
   return { paper: md.slice(0, m.index), answers: md.slice(m.index + m[0].length) };
 }
+
+// ── Money advisor ────────────────────────────────────────────
+const MONEY_SYSTEM = `You are a practical, friendly personal-finance coach for a self-employed private tutor whose income is tuition fees, which vary month to month.
+Use only the figures provided and never invent numbers. If the data is thin (few months recorded), say so. Give concrete amounts and timelines in the user's currency.
+Prefer realistic advice: an emergency fund first, putting a fixed amount aside on fee days, cutting the biggest expense categories, collecting overdue fees, adding a student or batch.
+Don't recommend specific investment products, loans or crypto; for big decisions suggest talking it over with someone they trust.
+Reply in clean Markdown with short headings and bullet points, under about 300 words unless asked for more. Reply in the language of the question (Bangla or English). No preamble.`;
+
+function moneyPromptData(snap) {
+  const L = [];
+  L.push(`Currency: ${db.settings.currency || ''}`, `Today: ${snap.today}`, '', 'Money received from tuition and money spent, by month:');
+  for (const x of snap.history) L.push(`- ${x.k}: income ${money(x.inc)}, expenses ${money(x.exp)}`);
+  L.push(`- ${snap.current.k} (this month so far): income ${money(snap.current.inc)}, expenses ${money(snap.current.exp)}`);
+  L.push('', `Typical month (${snap.basisPartial ? 'only this month so far' : 'average of ' + snap.basisMonths.join(', ')}): income ${money(Math.round(snap.avgIncome))}, expenses ${money(Math.round(snap.avgExpense))}, left over ${money(Math.round(snap.avgNet))}`);
+  const cats = Object.entries(snap.expenseByCategory).sort((a, b) => b[1] - a[1]);
+  if (cats.length) {
+    L.push('Typical monthly expenses by category:');
+    for (const [k, v] of cats) L.push(`- ${k}: ${money(Math.round(v))}`);
+  }
+  L.push('', `Unpaid fees students currently owe me: ${money(snap.outstanding)}`);
+  L.push(`Expected tuition fees per month from ${snap.expected.count} running contract(s), estimated: ${money(Math.round(snap.expected.total))}`);
+  L.push(`Active students: ${snap.activeStudents}`);
+  if (db.goals.length) {
+    // Goal names are free text (could mention a person), so they're replaced by numbers.
+    L.push('', 'Savings goals:');
+    for (const [i, g] of db.goals.entries()) {
+      const p = goalPlan(g, snap.avgNet, snap.today);
+      L.push(`- Goal ${i + 1}: costs ${money(g.target)}, saved ${money(g.saved)}${g.targetDate ? `, want it by ${g.targetDate}` : ', no deadline'}${p.perMonth ? `, needs ${money(Math.ceil(p.perMonth))}/month` : ''}`);
+    }
+  }
+  return L.join('\n');
+}
+
+function moneyPrompt(question, snap) {
+  return `My tuition money so far:\n\n${moneyPromptData(snap)}\n\nMy question: ${question}`;
+}

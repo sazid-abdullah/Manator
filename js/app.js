@@ -12,6 +12,9 @@ const ui = {
   aiBusy: false,
   docsType: '',
   docsStudent: '',
+  moneyQ: '',
+  moneyAI: null,
+  moneyBusy: false,
 };
 let lastRoute = '';
 let installPrompt = null;
@@ -138,7 +141,7 @@ function render() {
     case 'classes':
       if (query.get('student')) ui.classesStudent = query.get('student');
       html = viewClasses(); after = bindFilters; break;
-    case 'money': html = viewMoney(); after = bindFilters; break;
+    case 'money': html = viewMoney(); after = bindMoney; break;
     case 'ai':
       if (query.get('tool')) ui.aiTool = query.get('tool');
       if (query.get('student')) prefillAIStudent(query.get('student'));
@@ -685,6 +688,7 @@ function viewMoney() {
   const spent = exps.reduce((a, x) => a + Number(x.amount || 0), 0);
   const dues = allDues().filter(x => x.st.balance > 0.005);
   const outstanding = dues.reduce((a, x) => a + x.st.balance, 0);
+  const snap = moneySnapshot();
 
   const months = [];
   for (let i = 5; i >= 0; i--) months.push(monthKey(addMonths(m + '-01', -i)));
@@ -714,7 +718,9 @@ function viewMoney() {
       <div class="card stat"><div class="label">Net</div><div class="value">${money(income - spent)}</div></div>
       <div class="card stat"><div class="label">Outstanding now</div><div class="value ${outstanding > 0 ? 'neg' : ''}">${money(outstanding)}</div><div class="hint">across ${dues.length} contract${dues.length === 1 ? '' : 's'}</div></div>
     </div>
-    <div class="grid-2">
+    <div class="grid-2 section">${moneyPictureHTML(snap)}${goalsCardHTML(snap)}</div>
+    ${moneyAIHTML(snap)}
+    <div class="grid-2 section">
       <div class="card"><div class="card-head"><h2>Last 6 months</h2><div class="legend"><span><i style="background:var(--green)"></i>Income</span><span><i style="background:var(--red)"></i>Expenses</span></div></div>
         <div class="bars">${series.map(x => `<div class="bar-col" title="${esc(fmtMonth(x.k))}: +${esc(money(x.inc))} / -${esc(money(x.exp))}"><div class="bar-pair"><div class="bar" style="height:${(x.inc / max) * 100}%"></div><div class="bar exp" style="height:${(x.exp / max) * 100}%"></div></div><div class="bar-label">${esc(parseISO(x.k + '-01').toLocaleDateString(undefined, { month: 'short' }))}</div></div>`).join('')}</div></div>
       <div class="card"><h2>Who owes you</h2><div class="list">${dues.length ? dues.sort((a, b) => b.st.balance - a.st.balance).map(({ c, st, s }) => `<div class="row"><a class="grow" href="#/student/${s.id}" style="color:inherit"><div class="title">${esc(s.name)}</div><div class="meta">${esc(c.title)}${st.owedSince ? ' · since ' + esc(fmtDate(st.owedSince, { day: 'numeric', month: 'short' })) : ''}</div></a><span class="neg nowrap">${money(st.balance)}</span><button class="btn sm" data-action="add-payment" data-student="${s.id}" data-contract="${c.id}">Paid</button></div>`).join('') : '<div class="empty">Everyone is paid up.</div>'}</div></div>
@@ -724,6 +730,152 @@ function viewMoney() {
       <div class="card"><h2>Expenses by category</h2><div class="list">${Object.keys(byCat).length ? Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="row"><div class="grow title">${esc(k)}</div><span class="nowrap">${money(v)}</span></div>`).join('') : '<div class="empty">No expenses this month.</div>'}</div></div>
     </div>
     <div class="section"><h2>Transactions</h2><div class="card"><div class="list">${tx.length ? tx.map(t => t.html).join('') : '<div class="empty">Nothing recorded this month.</div>'}</div></div></div>`;
+}
+
+function shortMonth(k) { return parseISO(k + '-01').toLocaleDateString(undefined, { month: 'short' }); }
+
+function moneyPictureHTML(snap) {
+  const basis = snap.basisPartial ? 'Based on this month so far.' : `Average of ${snap.basisMonths.map(shortMonth).join(', ')}.`;
+  const rate = snap.avgIncome > 0 ? ` (${Math.round(snap.avgNet / snap.avgIncome * 100)}% of income)` : '';
+  const row = (label, value, cls, hint) => `<div class="row"><div class="grow"><div class="title">${label}</div>${hint ? `<div class="meta">${hint}</div>` : ''}</div><span class="nowrap ${cls || ''}">${value}</span></div>`;
+  return `<div class="card"><h2>Your typical month</h2><div class="list">
+    ${row('Income', money(Math.round(snap.avgIncome)), 'pos')}
+    ${row('Expenses', money(Math.round(snap.avgExpense)), 'neg')}
+    ${row('Left over to save', money(Math.round(snap.avgNet)) + esc(rate), snap.avgNet < 0 ? 'neg' : '')}
+    ${row('Expected from contracts', money(Math.round(snap.expected.total)), '', `Estimate from ${snap.expected.count} running contract${snap.expected.count === 1 ? '' : 's'}`)}
+    ${row('Owed to you now', money(snap.outstanding), snap.outstanding > 0 ? 'neg' : '')}
+  </div><div class="help">${esc(basis)}</div></div>`;
+}
+
+function goalAdvice(g, p, net) {
+  // Whole amounts read better; round the monthly target up so it's never short.
+  const m = n => money(Math.ceil(n));
+  net = Math.floor(net);
+  const by = g.targetDate ? fmtDate(g.targetDate) : '';
+  const when = p.eta ? fmtMonth(monthKey(p.eta)) : '';
+  switch (p.status) {
+    case 'done': return 'Goal reached. You have enough saved.';
+    case 'on-track': return `Save ${m(p.perMonth)}/month until ${by}. You have about ${m(net)}/month left over, so this fits.`;
+    case 'short': return `Needs ${m(p.perMonth)}/month to reach it by ${by}, but you only have about ${m(net)}/month left over. At that pace you'd reach it around ${when}. Cut ${m(p.perMonth - net)}/month of spending or move the date.`;
+    case 'open': return `Saving all of your ${m(net)}/month left over, you'd reach it around ${when}.`;
+    case 'past': return `The date has passed and ${m(p.remaining)} is still to go. Pick a new date.`;
+    default: return 'Lately your expenses are as high as your income, so there is nothing left to save. Ask the AI below for ideas.';
+  }
+}
+
+function goalsCardHTML(snap) {
+  const plans = db.goals.map(g => ({ g, p: goalPlan(g, snap.avgNet, snap.today) }));
+  const need = plans.reduce((a, x) => a + (x.p.status === 'done' ? 0 : x.p.perMonth || 0), 0);
+  const rows = plans.map(({ g, p }) => `<div class="row"><div class="grow">
+      <div class="title">${esc(g.name)}</div>
+      <div class="meta">${money(g.saved)} of ${money(g.target)}${g.targetDate ? ' · by ' + esc(fmtDate(g.targetDate)) : ''}</div>
+      <div class="progress${['short', 'past', 'no-savings'].includes(p.status) ? ' warn' : ''}"><span style="width:${Math.round(p.pct * 100)}%"></span></div>
+      <div class="meta">${esc(goalAdvice(g, p, snap.avgNet))}</div></div>
+      <div class="actions"><button class="btn sm" data-action="goal-deposit" data-id="${g.id}">+ Add money</button><button class="btn sm ghost" data-action="edit-goal" data-id="${g.id}">Edit</button></div></div>`).join('');
+  const summary = plans.length > 1 && need > 0
+    ? `<div class="help">All goals with a date need about ${money(Math.ceil(need))}/month together; you have about ${money(Math.max(0, Math.floor(snap.avgNet)))}/month left over.</div>` : '';
+  return `<div class="card"><div class="card-head"><h2>Savings goals</h2><button class="btn sm primary" data-action="add-goal">+ Goal</button></div>
+    <div class="list">${rows || '<div class="empty">Planning a big purchase? Add a goal to see how much to save each month.</div>'}</div>${summary}</div>`;
+}
+
+const MONEY_QUESTIONS = [
+  'How is my money this month compared to before?',
+  'Where can I cut my spending?',
+  'How should I save for my goals?',
+  'How much should I keep as an emergency fund?',
+];
+
+function moneyAIHTML(snap) {
+  const r = ui.moneyAI;
+  const out = !r ? '' : r.error
+    ? `<div class="notice err ai-output"><b>Couldn't get an answer.</b> ${esc(r.error)}</div>`
+    : `<div class="ai-output"><div class="card-head"><h3>${esc(r.q)}</h3><button class="btn sm" data-action="money-ai-copy">Copy</button></div><div class="doc">${renderMarkdown(r.content)}</div></div>`;
+  return `<div class="card section"><h2>Ask AI about your money</h2>
+    <p class="muted small">Advice on spending, saving and big purchases. The AI only gets the totals shown under "What gets sent" — no student names, phone numbers or goal names.${aiReady() ? '' : ' <a href="#/settings">Set up a free AI provider first.</a>'}</p>
+    <div class="chips money-chips">${MONEY_QUESTIONS.map(q => `<button class="btn sm ghost" data-action="money-ai-chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <form class="form" id="money-ai-form">
+      <label class="field">Your question<textarea name="q" rows="2" placeholder="e.g. I want to buy a ${esc(db.settings.currency)}80,000 laptop by March. How much should I save each month?">${esc(ui.moneyQ)}</textarea></label>
+      <details class="sent"><summary>What gets sent to the AI</summary><pre>${esc(moneyPromptData(snap))}</pre></details>
+      <div class="form-actions"><button class="btn primary" id="money-ai-go"${ui.moneyBusy ? ' disabled' : ''}>${ui.moneyBusy ? '<span class="spinner"></span> Thinking…' : 'Ask AI'}</button></div>
+    </form>${out}</div>`;
+}
+
+function bindMoney() {
+  bindFilters();
+  const form = view.querySelector('#money-ai-form');
+  form.q.addEventListener('input', () => { ui.moneyQ = form.q.value; });
+  form.onsubmit = e => { e.preventDefault(); askMoneyAI(form.q.value.trim()); };
+}
+
+async function askMoneyAI(q) {
+  if (!q || ui.moneyBusy) return;
+  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+  ui.moneyQ = q;
+  ui.moneyBusy = true;
+  render();
+  try {
+    const content = await callAI(MONEY_SYSTEM, moneyPrompt(q, moneySnapshot()), { temperature: 0.4, maxTokens: 2048 });
+    ui.moneyAI = { q, content };
+  } catch (err) {
+    ui.moneyAI = { q, error: err.message || String(err) };
+  } finally {
+    ui.moneyBusy = false;
+    if (parseHash().parts[0] === 'money') render();
+    else toast(ui.moneyAI.error ? 'Money advice failed' : 'Money advice ready', ui.moneyAI.error ? 'error' : null, { label: 'Open', fn: () => { location.hash = '#/money'; } });
+  }
+}
+
+function openGoalForm(g) {
+  const isNew = !g;
+  const d = g || { name: '', target: '', saved: 0, targetDate: '', note: '' };
+  openModal(isNew ? 'New savings goal' : 'Edit goal', `<form class="form" id="f-goal">
+      <label class="field">What are you saving for? *<input name="name" required value="${esc(d.name)}" placeholder="e.g. New laptop"></label>
+      <div class="form-row"><label class="field">Cost (${esc(db.settings.currency)}) *<input name="target" type="number" min="1" step="any" required value="${esc(d.target)}"></label>
+        <label class="field">Saved so far<input name="saved" type="number" min="0" step="any" value="${esc(d.saved)}"></label>
+        <label class="field">Buy by (optional)<input name="targetDate" type="date" value="${esc(d.targetDate || '')}"></label></div>
+      <label class="field">Note<input name="note" value="${esc(d.note || '')}"></label>
+      <div class="form-actions">${isNew ? '' : '<button type="button" class="btn danger left" id="del-goal">Delete</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save goal</button></div></form>`,
+  body => {
+    const form = body.querySelector('form');
+    if (!isNew) body.querySelector('#del-goal').onclick = () => {
+      const copy = { ...g };
+      db.goals = db.goals.filter(x => x.id !== g.id); if (!save()) return; closeModal(); render();
+      toast('Goal deleted', null, { label: 'Undo', fn: () => { db.goals.push(copy); if (!save()) return; render(); } });
+    };
+    form.onsubmit = e => {
+      e.preventDefault();
+      const f = formData(form);
+      const data = { name: f.name, target: Number(f.target) || 0, saved: Math.max(0, Number(f.saved) || 0), targetDate: f.targetDate || undefined, note: f.note };
+      if (isNew) db.goals.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
+      else {
+        const cur = liveRecord('goals', g);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+      }
+      if (!save()) return; closeModal(); render();
+      toast('Goal saved');
+    };
+  });
+}
+
+function openGoalDeposit(id) {
+  const g = db.goals.find(x => x.id === id);
+  if (!g) return;
+  openModal(`Add money to "${g.name}"`, `<form class="form">
+      <label class="field">Amount (${esc(db.settings.currency)})<input name="amount" type="number" step="any" required autofocus></label>
+      <div class="help">Use a minus amount (e.g. -500) if you took money out.</div>
+      <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add</button></div></form>`,
+  body => {
+    body.querySelector('form').onsubmit = e => {
+      e.preventDefault();
+      const amt = Number(e.target.amount.value) || 0;
+      const cur = liveRecord('goals', g);
+      if (!cur) { closeModal(); return render(); }
+      cur.saved = Math.max(0, (Number(cur.saved) || 0) + amt);
+      if (!save()) return; closeModal(); render();
+      toast(`${money(cur.saved)} saved of ${money(cur.target)}`);
+    };
+  });
 }
 
 function exportCSV() {
@@ -1241,6 +1393,7 @@ function loadDemo() {
   db.lessons.push(...lessons);
   db.payments.push(...payments.map(p => ({ ...p, createdAt: new Date().toISOString() })));
   db.expenses.push(...expenses.map(x => ({ ...x, createdAt: new Date().toISOString() })));
+  db.goals.push({ id: uid(), name: 'New laptop', target: 65000, saved: 12000, targetDate: addMonths(todayISO(), 6), createdAt: new Date().toISOString() });
   return save();
 }
 
@@ -1280,6 +1433,15 @@ const ACTIONS = {
   'copy-reminder': d => { const c = getContract(d.contract); copyText(reminderText(getStudent(c.studentId), c, contractStatus(c))); },
   'classes-all-time': () => { ui.classesMonth = ''; render(); },
   'export-csv': () => exportCSV(),
+  'add-goal': () => openGoalForm(),
+  'edit-goal': d => openGoalForm(db.goals.find(g => g.id === d.id)),
+  'goal-deposit': d => openGoalDeposit(d.id),
+  'money-ai-chip': d => {
+    ui.moneyQ = d.q;
+    const t = view.querySelector('#money-ai-form [name=q]');
+    if (t) { t.value = d.q; t.focus(); }
+  },
+  'money-ai-copy': () => ui.moneyAI && ui.moneyAI.content && copyText(ui.moneyAI.content),
   'backup': () => {
     const keys = document.getElementById('backup-keys');
     downloadFile(`manator-backup-${todayISO()}.json`, exportBackup(keys && keys.checked), 'application/json');
