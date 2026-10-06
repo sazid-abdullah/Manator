@@ -244,10 +244,11 @@ function moneyPromptData(snap) {
   L.push(`Expected tuition fees per month from ${snap.expected.count} running contract(s), estimated: ${money(Math.round(snap.expected.total))}`);
   L.push(`Active students: ${snap.activeStudents}`);
   if (db.goals.length) {
+    // Goal names are free text (could mention a person), so they're replaced by numbers.
     L.push('', 'Savings goals:');
-    for (const g of db.goals) {
+    for (const [i, g] of db.goals.entries()) {
       const p = goalPlan(g, snap.avgNet, snap.today);
-      L.push(`- ${g.name}: costs ${money(g.target)}, saved ${money(g.saved)}${g.targetDate ? `, want it by ${g.targetDate}` : ', no deadline'}${p.perMonth ? `, needs ${money(Math.ceil(p.perMonth))}/month` : ''}`);
+      L.push(`- Goal ${i + 1}: costs ${money(g.target)}, saved ${money(g.saved)}${g.targetDate ? `, want it by ${g.targetDate}` : ', no deadline'}${p.perMonth ? `, needs ${money(Math.ceil(p.perMonth))}/month` : ''}`);
     }
   }
   return L.join('\n');

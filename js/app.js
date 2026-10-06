@@ -791,7 +791,7 @@ function moneyAIHTML(snap) {
     ? `<div class="notice err ai-output"><b>Couldn't get an answer.</b> ${esc(r.error)}</div>`
     : `<div class="ai-output"><div class="card-head"><h3>${esc(r.q)}</h3><button class="btn sm" data-action="money-ai-copy">Copy</button></div><div class="doc">${renderMarkdown(r.content)}</div></div>`;
   return `<div class="card section"><h2>Ask AI about your money</h2>
-    <p class="muted small">Advice on spending, saving and big purchases. The AI only gets the totals shown under "What gets sent" — no student names or phone numbers.${aiReady() ? '' : ' <a href="#/settings">Set up a free AI provider first.</a>'}</p>
+    <p class="muted small">Advice on spending, saving and big purchases. The AI only gets the totals shown under "What gets sent" — no student names, phone numbers or goal names.${aiReady() ? '' : ' <a href="#/settings">Set up a free AI provider first.</a>'}</p>
     <div class="chips money-chips">${MONEY_QUESTIONS.map(q => `<button class="btn sm ghost" data-action="money-ai-chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
     <form class="form" id="money-ai-form">
       <label class="field">Your question<textarea name="q" rows="2" placeholder="e.g. I want to buy a ${esc(db.settings.currency)}80,000 laptop by March. How much should I save each month?">${esc(ui.moneyQ)}</textarea></label>
