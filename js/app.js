@@ -93,8 +93,9 @@ function studentOptions(selected, includeBlank, blankLabel) {
   return (includeBlank ? `<option value="">${esc(blankLabel || '— Select student —')}</option>` : '') +
     list.map(s => `<option value="${s.id}"${s.id === selected ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
 }
-function contractOptions(studentId, selected, allowNone) {
-  const list = studentId ? studentContracts(studentId).filter(c => c.status !== 'ended' || c.id === selected) : [];
+function contractOptions(studentId, selected, allowNone, date) {
+  const open = studentId ? activeContracts(studentId, date) : [];
+  const list = studentId ? studentContracts(studentId).filter(c => open.includes(c) || c.id === selected) : [];
   return list.map(c => `<option value="${c.id}"${c.id === selected ? ' selected' : ''}>${esc(c.title || 'Contract')} · ${money(c.fee)} ${esc(cycleLabel(c))}</option>`).join('') +
     (allowNone ? `<option value=""${!selected ? ' selected' : ''}>Not linked to a contract</option>` : '');
 }
@@ -172,8 +173,21 @@ function viewHome() {
   const scheduled = [];
   for (const s of active) for (const slot of (s.schedule || [])) if (Number(slot.day) === dow) scheduled.push({ s, slot });
   scheduled.sort((a, b) => (a.slot.time || '').localeCompare(b.slot.time || ''));
-  const scheduledIds = new Set(scheduled.map(x => x.s.id));
-  const extra = todays.filter(l => !scheduledIds.has(l.studentId));
+  // Match each timetable slot to the class logged for it: same time first, else
+  // (if the student has a single slot today) any class logged for them today.
+  const used = new Set();
+  const slotsPerStudent = {};
+  for (const x of scheduled) slotsPerStudent[x.s.id] = (slotsPerStudent[x.s.id] || 0) + 1;
+  for (const x of scheduled) {
+    x.lesson = todays.find(l => !used.has(l.id) && l.studentId === x.s.id && (l.time || '') === (x.slot.time || ''));
+    if (x.lesson) used.add(x.lesson.id);
+  }
+  for (const x of scheduled) {
+    if (x.lesson || slotsPerStudent[x.s.id] > 1) continue;
+    x.lesson = todays.find(l => !used.has(l.id) && l.studentId === x.s.id);
+    if (x.lesson) used.add(x.lesson.id);
+  }
+  const extra = todays.filter(l => !used.has(l.id));
 
   const month = monthKey(today);
   const income = db.payments.filter(p => monthKey(p.date) === month).reduce((a, p) => a + Number(p.amount || 0), 0);
@@ -183,10 +197,9 @@ function viewHome() {
   const soon = dues.filter(x => isDueSoon(x.c, x.st));
   const outstanding = owed.reduce((a, x) => a + x.st.balance, 0);
 
-  const todayRows = scheduled.map(({ s, slot }) => {
-    const logged = todays.filter(l => l.studentId === s.id);
-    const right = logged.length
-      ? `${statusBadge(logged[0].status)} <button class="btn sm ghost" data-action="edit-lesson" data-id="${logged[0].id}">Edit</button>`
+  const todayRows = scheduled.map(({ s, slot, lesson }) => {
+    const right = lesson
+      ? `${statusBadge(lesson.status)} <button class="btn sm ghost" data-action="edit-lesson" data-id="${lesson.id}">Edit</button>`
       : `<button class="btn sm green" data-action="log-lesson" data-student="${s.id}" data-time="${esc(slot.time || '')}" data-duration="${esc(slot.duration || '')}">Log class</button>
          <button class="btn sm ghost" data-action="quick-absent" data-student="${s.id}" data-time="${esc(slot.time || '')}">Absent</button>`;
     return `<div class="row"><span class="time-pill">${esc(fmtTime(slot.time) || '—')}</span>
@@ -397,14 +410,16 @@ function openStudentForm(s) {
       if (isNew) {
         const st = { id: uid(), active: true, createdAt: new Date().toISOString(), ...data };
         db.students.push(st);
-        save();
+        if (!save()) return;
         closeModal();
         location.hash = `#/student/${st.id}`;
         render();
         openContractForm(st.id, null, true);
       } else {
-        Object.assign(s, data);
-        save(); closeModal(); render();
+        const cur = liveRecord('students', s);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+        if (!save()) return; closeModal(); render();
         toast('Student saved');
       }
     };
@@ -451,8 +466,12 @@ function openContractForm(studentId, c, fromNewStudent) {
         db.contracts.push(nc);
         // Link this student's unassigned classes since the start date.
         db.lessons.forEach(l => { if (l.studentId === studentId && !l.contractId && l.date >= nc.startDate) l.contractId = nc.id; });
-      } else Object.assign(c, data);
-      save(); closeModal(); render();
+      } else {
+        const cur = liveRecord('contracts', c);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+      }
+      if (!save()) return; closeModal(); render();
       toast('Contract saved');
     };
   });
@@ -466,7 +485,7 @@ function openLessonForm(opts) {
   const s = getStudent(studentId);
   const d = l || {
     studentId, date: opts.date || todayISO(), time: opts.time || nowTime(), duration: opts.duration || (s && s.schedule && s.schedule[0] && s.schedule[0].duration) || 60,
-    subject: s && s.subjects ? s.subjects[0] || '' : '', status: opts.status || 'taught', contractId: defaultContractFor(studentId), topics: '', homework: '', notes: '',
+    subject: s && s.subjects ? s.subjects[0] || '' : '', status: opts.status || 'taught', contractId: defaultContractFor(studentId, opts.date), topics: '', homework: '', notes: '',
   };
   if (!db.students.length) { toast('Add a student first'); return openStudentForm(); }
   openModal(isNew ? 'Log class' : 'Edit class', `<form class="form" id="f-lesson">
@@ -493,17 +512,20 @@ function openLessonForm(opts) {
         const slot = (st.schedule || []).find(x => Number(x.day) === parseISO(form.date.value).getDay());
         if (slot) { form.time.value = slot.time || form.time.value; form.duration.value = slot.duration || form.duration.value; }
       }
-      const cid = initial ? d.contractId : defaultContractFor(sel.value);
-      const opts = contractOptions(sel.value, cid, true);
+      const cid = initial ? d.contractId : defaultContractFor(sel.value, form.date.value);
+      const opts = contractOptions(sel.value, cid, true, form.date.value);
       form.contractId.innerHTML = opts;
       body.querySelector('#contract-field').style.display = st && studentContracts(st.id).length ? '' : 'none';
     };
     sel.addEventListener('change', () => syncStudent(false));
+    if (isNew) form.date.addEventListener('change', () => {
+      form.contractId.innerHTML = contractOptions(sel.value, defaultContractFor(sel.value, form.date.value), true, form.date.value);
+    });
     syncStudent(true);
     if (!isNew) body.querySelector('#del-lesson').onclick = () => {
       const copy = { ...l };
-      db.lessons = db.lessons.filter(x => x.id !== l.id); save(); closeModal(); render();
-      toast('Class deleted', null, { label: 'Undo', fn: () => { db.lessons.push(copy); save(); render(); } });
+      db.lessons = db.lessons.filter(x => x.id !== l.id); if (!save()) return; closeModal(); render();
+      toast('Class deleted', null, { label: 'Undo', fn: () => { db.lessons.push(copy); if (!save()) return; render(); } });
     };
     form.onsubmit = e => {
       e.preventDefault();
@@ -511,8 +533,12 @@ function openLessonForm(opts) {
       if (!f.studentId) return;
       const data = { studentId: f.studentId, date: f.date, time: f.time, duration: Number(f.duration) || null, status: f.status || 'taught', subject: f.subject, contractId: f.contractId || null, topics: f.topics, homework: f.homework, notes: f.notes };
       if (isNew) db.lessons.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
-      else Object.assign(l, data);
-      save(); closeModal(); render();
+      else {
+        const cur = liveRecord('lessons', l);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+      }
+      if (!save()) return; closeModal(); render();
       toast(isNew ? 'Class logged' : 'Class saved');
       if (isNew && data.status === 'taught' && data.contractId) notifyCycleComplete(data.contractId);
     };
@@ -562,8 +588,8 @@ function openPaymentForm(opts) {
     };
     const sync = initial => {
       const sid = form.studentId.value;
-      const cid = initial ? d.contractId : defaultContractFor(sid);
-      form.contractId.innerHTML = contractOptions(sid, cid, true);
+      const cid = initial ? d.contractId : defaultContractFor(sid, form.date.value);
+      form.contractId.innerHTML = contractOptions(sid, cid, true, form.date.value);
       body.querySelector('#pay-contract').style.display = sid && studentContracts(sid).length ? '' : 'none';
       if (!initial && isNew) form.amount.value = suggest(form.contractId.value);
       hint();
@@ -573,16 +599,20 @@ function openPaymentForm(opts) {
     sync(true);
     if (!isNew) body.querySelector('#del-payment').onclick = () => {
       const copy = { ...p };
-      db.payments = db.payments.filter(x => x.id !== p.id); save(); closeModal(); render();
-      toast('Payment deleted', null, { label: 'Undo', fn: () => { db.payments.push(copy); save(); render(); } });
+      db.payments = db.payments.filter(x => x.id !== p.id); if (!save()) return; closeModal(); render();
+      toast('Payment deleted', null, { label: 'Undo', fn: () => { db.payments.push(copy); if (!save()) return; render(); } });
     };
     form.onsubmit = e => {
       e.preventDefault();
       const f = formData(form);
       const data = { studentId: f.studentId, contractId: f.contractId || null, amount: Number(f.amount) || 0, date: f.date, method: f.method, note: f.note };
       if (isNew) db.payments.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
-      else Object.assign(p, data);
-      save(); closeModal(); render();
+      else {
+        const cur = liveRecord('payments', p);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+      }
+      if (!save()) return; closeModal(); render();
       toast(`Payment of ${money(data.amount)} saved`);
     };
   });
@@ -602,16 +632,20 @@ function openExpenseForm(x) {
     const form = body.querySelector('form');
     if (!isNew) body.querySelector('#del-exp').onclick = () => {
       const copy = { ...x };
-      db.expenses = db.expenses.filter(e => e.id !== x.id); save(); closeModal(); render();
-      toast('Expense deleted', null, { label: 'Undo', fn: () => { db.expenses.push(copy); save(); render(); } });
+      db.expenses = db.expenses.filter(e => e.id !== x.id); if (!save()) return; closeModal(); render();
+      toast('Expense deleted', null, { label: 'Undo', fn: () => { db.expenses.push(copy); if (!save()) return; render(); } });
     };
     form.onsubmit = e => {
       e.preventDefault();
       const f = formData(form);
       const data = { amount: Number(f.amount) || 0, date: f.date, category: f.category, note: f.note };
       if (isNew) db.expenses.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
-      else Object.assign(x, data);
-      save(); closeModal(); render();
+      else {
+        const cur = liveRecord('expenses', x);
+        if (!cur) { closeModal(); return render(); }
+        Object.assign(cur, data);
+      }
+      if (!save()) return; closeModal(); render();
       toast('Expense saved');
     };
   });
@@ -699,7 +733,13 @@ function exportCSV() {
     rows.push(['Income', p.date, studentName(p.studentId), c ? c.title : '', p.method || '', p.amount, p.note || '']);
   }
   for (const x of [...db.expenses].sort((a, b) => a.date.localeCompare(b.date))) rows.push(['Expense', x.date, '', '', x.category, -Number(x.amount || 0), x.note || '']);
-  const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  // Text starting with = + - @ could run as a formula in Excel/Sheets, so prefix it with '.
+  const cell = v => {
+    let t = String(v == null ? '' : v);
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = "'" + t;
+    return `"${t.replace(/"/g, '""')}"`;
+  };
+  const csv = rows.map(r => r.map(cell).join(',')).join('\r\n');
   downloadFile(`manator-money-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
 }
 
@@ -1029,7 +1069,9 @@ function importDocForm() {
         if (!content.trim()) throw new Error('No text found in this file.');
         const d = formData(form);
         const doc = { id: uid(), type: d.type, title: d.title || file.name.replace(/\.[^.]+$/, ''), content, studentId: d.studentId || '', meta: { importedFrom: file.name }, createdAt: new Date().toISOString() };
-        db.docs.push(doc); save(); render(); openDoc(doc);
+        db.docs.push(doc);
+        if (!save()) { btn.disabled = false; btn.textContent = 'Import'; return; }
+        render(); openDoc(doc);
         toast(skipped ? `Imported. ${skipped} picture${skipped > 1 ? 's' : ''} couldn't be imported.` : 'Imported to your library');
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Import';
@@ -1049,14 +1091,14 @@ function openDoc(doc) {
     if (hasKey) body.querySelector('#d-paper').onclick = () => printMarkdown(doc.title, splitAnswerKey(doc.content).paper);
     body.querySelector('#d-copy').onclick = () => copyText(doc.content);
     body.querySelector('#d-del').onclick = () => {
-      db.docs = db.docs.filter(x => x.id !== doc.id); save(); closeModal(); render();
-      toast('Deleted', null, { label: 'Undo', fn: () => { db.docs.push(doc); save(); render(); } });
+      db.docs = db.docs.filter(x => x.id !== doc.id); if (!save()) return; closeModal(); render();
+      toast('Deleted', null, { label: 'Undo', fn: () => { db.docs.push(doc); if (!save()) return; render(); } });
     };
     body.querySelector('#d-edit').onclick = () => {
       const wrap = body.querySelector('#d-body');
       wrap.outerHTML = `<form id="d-form" class="form"><textarea name="content" rows="18" style="font-family:ui-monospace,Consolas,monospace;font-size:.85rem">${esc(doc.content)}</textarea>
         <div class="form-actions"><button class="btn primary">Save changes</button></div></form>`;
-      body.querySelector('#d-form').onsubmit = e => { e.preventDefault(); doc.content = e.target.content.value; save(); openDoc(doc); toast('Saved'); };
+      body.querySelector('#d-form').onsubmit = e => { e.preventDefault(); const cur = liveRecord('docs', doc); if (!cur) return closeModal(); cur.content = e.target.content.value; if (!save()) return; openDoc(cur); toast('Saved'); };
     };
   });
 }
@@ -1078,7 +1120,7 @@ function viewSettings() {
         <p class="muted small" style="margin-bottom:12px">Only the class, subject and topics are sent to the AI. Student names, phone numbers and money are never sent. Your key stays in this browser.</p>
         <form class="form" id="f-ai">
           <label class="field">Provider<select name="provider">${Object.entries(AI_PROVIDERS).map(([k, v]) => `<option value="${k}"${k === prov ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
-          <div class="notice">${esc(p.note)} ${p.needsKey ? `Get a free key: <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(p.keyUrl.replace('https://', ''))}</a>` : `<a href="${p.keyUrl}" target="_blank" rel="noopener">Download Ollama</a>`}</div>
+          <div class="notice">${esc(p.note.replace('{origin}', location.origin))} ${p.needsKey ? `Get a free key: <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(p.keyUrl.replace('https://', ''))}</a>` : `<a href="${p.keyUrl}" target="_blank" rel="noopener">Download Ollama</a>`}</div>
           ${p.needsKey ? `<label class="field">API key<input name="key" type="password" autocomplete="off" value="${esc(db.ai.keys[prov] || '')}" placeholder="Paste your ${esc(p.name)} key"></label>` : ''}
           <label class="field">Model<input name="model" list="model-list" value="${esc(aiModel(prov))}"><datalist id="model-list">${p.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist></label>
           <div class="help">Suggested: ${p.models.map(esc).join(', ')}. If a model stops working, try another or type a newer name.</div>
@@ -1105,7 +1147,7 @@ function bindSettings() {
     const f = formData(e.target);
     db.settings.tutorName = f.tutorName;
     db.settings.currency = e.target.currency.value;
-    save(); render(); toast('Profile saved');
+    if (!save()) return; render(); toast('Profile saved');
   };
   const aiForm = document.getElementById('f-ai');
   const storeAI = () => {
@@ -1113,10 +1155,10 @@ function bindSettings() {
     if (aiForm.key) db.ai.keys[db.ai.provider] = f.key;
     db.ai.models[db.ai.provider] = f.model || AI_PROVIDERS[db.ai.provider].models[0];
   };
-  aiForm.provider.addEventListener('change', () => { storeAI(); db.ai.provider = aiForm.provider.value; save(); render(); });
-  aiForm.onsubmit = e => { e.preventDefault(); storeAI(); save(); toast('AI settings saved'); };
+  aiForm.provider.addEventListener('change', () => { storeAI(); db.ai.provider = aiForm.provider.value; if (!save()) return; render(); });
+  aiForm.onsubmit = e => { e.preventDefault(); storeAI(); if (!save()) return; toast('AI settings saved'); };
   document.getElementById('ai-test').onclick = async ev => {
-    storeAI(); save();
+    storeAI(); if (!save()) return;
     if (!aiReady()) return toast('Paste your API key first', 'error');
     const btn = ev.currentTarget;
     btn.disabled = true; btn.textContent = 'Testing…';
@@ -1199,7 +1241,7 @@ function loadDemo() {
   db.lessons.push(...lessons);
   db.payments.push(...payments.map(p => ({ ...p, createdAt: new Date().toISOString() })));
   db.expenses.push(...expenses.map(x => ({ ...x, createdAt: new Date().toISOString() })));
-  save();
+  return save();
 }
 
 // ── Actions (delegated clicks) ───────────────────────────────
@@ -1209,10 +1251,10 @@ const ACTIONS = {
   'delete-student': d => {
     const s = getStudent(d.id);
     confirmDialog('Delete student?', `This permanently deletes ${s.name} with all their classes, contracts and payments. Archive instead to keep the history.`, 'Delete', () => {
-      deleteStudent(d.id); location.hash = '#/students'; toast('Student deleted');
+      if (!deleteStudent(d.id)) return; location.hash = '#/students'; toast('Student deleted');
     });
   },
-  'toggle-archive': d => { const s = getStudent(d.id); s.active = s.active === false; save(); render(); toast(s.active ? 'Student unarchived' : 'Student archived'); },
+  'toggle-archive': d => { const s = getStudent(d.id); s.active = s.active === false; if (!save()) return; render(); toast(s.active ? 'Student unarchived' : 'Student archived'); },
   'add-contract': d => openContractForm(d.student),
   'edit-contract': d => { const c = getContract(d.id); openContractForm(c.studentId, c); },
   'end-contract': d => {
@@ -1220,16 +1262,16 @@ const ACTIONS = {
     openModal('End contract', `<form class="form"><p class="muted">No new fees are billed after the end date. Anything already owed stays owed.</p>
       <label class="field">End date<input type="date" name="endDate" value="${todayISO()}" required></label>
       <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">End contract</button></div></form>`,
-    body => { body.querySelector('form').onsubmit = e => { e.preventDefault(); c.status = 'ended'; c.endDate = e.target.endDate.value; save(); closeModal(); render(); toast('Contract ended'); }; });
+    body => { body.querySelector('form').onsubmit = e => { e.preventDefault(); const cur = liveRecord('contracts', c); if (!cur) { closeModal(); return render(); } cur.status = 'ended'; cur.endDate = e.target.endDate.value; if (!save()) return; closeModal(); render(); toast('Contract ended'); }; });
   },
-  'reopen-contract': d => { const c = getContract(d.id); c.status = 'active'; delete c.endDate; save(); render(); },
-  'delete-contract': d => confirmDialog('Delete contract?', 'Its payments and classes are kept but no longer linked to a contract.', 'Delete', () => { deleteContract(d.id); render(); toast('Contract deleted'); }),
+  'reopen-contract': d => { const c = getContract(d.id); c.status = 'active'; delete c.endDate; if (!save()) return; render(); },
+  'delete-contract': d => confirmDialog('Delete contract?', 'Its payments and classes are kept but no longer linked to a contract.', 'Delete', () => { if (!deleteContract(d.id)) return; render(); toast('Contract deleted'); }),
   'log-lesson': d => openLessonForm({ studentId: d.student, time: d.time, duration: d.duration }),
   'edit-lesson': d => openLessonForm({ lesson: db.lessons.find(l => l.id === d.id) }),
   'quick-absent': d => {
     const l = { id: uid(), studentId: d.student, contractId: defaultContractFor(d.student), date: todayISO(), time: d.time || '', status: 'absent', subject: (getStudent(d.student).subjects || [])[0] || '', topics: '', homework: '', notes: '', createdAt: new Date().toISOString() };
-    db.lessons.push(l); save(); render();
-    toast(`${studentName(d.student)} marked absent`, null, { label: 'Undo', fn: () => { db.lessons = db.lessons.filter(x => x.id !== l.id); save(); render(); } });
+    db.lessons.push(l); if (!save()) return; render();
+    toast(`${studentName(d.student)} marked absent`, null, { label: 'Undo', fn: () => { db.lessons = db.lessons.filter(x => x.id !== l.id); if (!save()) return; render(); } });
   },
   'add-payment': d => openPaymentForm({ studentId: d.student, contractId: d.contract }),
   'edit-payment': d => openPaymentForm({ payment: db.payments.find(p => p.id === d.id) }),
@@ -1241,16 +1283,16 @@ const ACTIONS = {
   'backup': () => {
     const keys = document.getElementById('backup-keys');
     downloadFile(`manator-backup-${todayISO()}.json`, exportBackup(keys && keys.checked), 'application/json');
-    db.settings.lastBackup = new Date().toISOString(); save(); render();
+    db.settings.lastBackup = new Date().toISOString(); if (!save()) return; render();
     toast('Backup downloaded');
   },
   'load-demo': () => {
-    const go = () => { loadDemo(); location.hash = '#/'; render(); toast('Demo data loaded. Erase it any time in Settings.'); };
+    const go = () => { if (!loadDemo()) return; location.hash = '#/'; render(); toast('Demo data loaded. Erase it any time in Settings.'); };
     if (db.students.length) confirmDialog('Add demo data?', 'Three sample students with classes and payments will be added next to your own data.', 'Add demo data', go);
     else go();
   },
   'erase-all': () => confirmDialog('Erase everything?', 'All students, classes, contracts, payments and AI documents in this browser will be deleted. Download a backup first if unsure.', 'Erase all', () => {
-    const ai = db.ai; db = defaultState(); db.ai = ai; save(); location.hash = '#/'; render(); toast('All data erased');
+    const ai = db.ai; db = defaultState(); db.ai = ai; if (!save()) return; location.hash = '#/'; render(); toast('All data erased');
   }),
   'install': async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); },
   'open-doc': d => openDoc(db.docs.find(x => x.id === d.id)),
@@ -1258,7 +1300,7 @@ const ACTIONS = {
   'ai-save': () => {
     const r = ui.aiResult; if (!r || r.savedId) return;
     const doc = { id: uid(), type: r.tool, title: r.title, content: r.content, studentId: r.studentId, meta: r.meta, createdAt: new Date().toISOString() };
-    db.docs.push(doc); r.savedId = doc.id; save(); render(); toast('Saved to your AI library');
+    db.docs.push(doc); if (!save()) return; r.savedId = doc.id; render(); toast('Saved to your AI library');
   },
   'ai-copy': () => ui.aiResult && copyText(ui.aiResult.content),
   'ai-print': () => ui.aiResult && printMarkdown(ui.aiResult.title, ui.aiResult.content),
@@ -1275,7 +1317,8 @@ document.addEventListener('click', e => {
   fn(el.dataset, el);
 });
 
-window.addEventListener('storage', e => { if (e.key === STORE_KEY) { db = loadState(); render(); } });
+// Another tab saved: reload. Open forms look their record up again by id when submitted.
+window.addEventListener('storage', e => { if (e.key === STORE_KEY) { db = loadState(); if (modalRoot.hidden) render(); } });
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));

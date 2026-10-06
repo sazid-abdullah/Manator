@@ -65,12 +65,13 @@ function contractStatus(c, today) {
   if (advance && started) {
     billedCycles = completed + 1;
     if (ended && progress === 0 && completed > 0) billedCycles = completed;
-    if (c.cycleType === 'classes' && ended && taught === completed * n) billedCycles = completed;
+    if (c.cycleType === 'classes' && ended && completed > 0 && taught === completed * n) billedCycles = completed;
   }
   if (!started) billedCycles = 0;
 
   const billed = billedCycles * fee;
-  const paid = db.payments.filter(p => p.contractId === c.id).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  // Payments dated in the future don't count yet, so they can't hide money owed today.
+  const paid = db.payments.filter(p => p.contractId === c.id && p.date <= today).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const balance = billed - paid;
 
   // When the oldest unpaid fee became due, to show how long it has been owed.
@@ -126,7 +127,9 @@ function allDues() {
     .filter(x => x.s);
 }
 
-function defaultContractFor(studentId) {
-  const list = activeContracts(studentId);
-  return list.length ? list[0].id : null;
+function defaultContractFor(studentId, date) {
+  date = date || todayISO();
+  const list = activeContracts(studentId, date);
+  const running = list.find(c => c.startDate <= date);
+  return running ? running.id : list.length ? list[0].id : null;
 }

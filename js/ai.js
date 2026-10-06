@@ -25,10 +25,11 @@ const AI_PROVIDERS = {
     name: 'Ollama (local, offline)',
     needsKey: false,
     keyUrl: 'https://ollama.com/download',
-    note: 'Runs on your own computer, no key or internet needed. Start Ollama with OLLAMA_ORIGINS=* so the browser can reach it.',
+    note: 'Runs on your own computer, no key or internet needed. Start Ollama with OLLAMA_ORIGINS={origin} so this app (and only this app) can reach it. Avoid OLLAMA_ORIGINS=*, which lets any website use it.',
     models: ['llama3.2', 'qwen2.5', 'gemma3'],
   },
 };
+if (!(db.ai.provider in AI_PROVIDERS)) db.ai.provider = 'gemini';
 
 function aiModel(provider) {
   provider = provider || db.ai.provider;
