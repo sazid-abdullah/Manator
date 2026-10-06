@@ -214,7 +214,9 @@ function renderMarkdown(md) {
 
 // Splits "paper --- ## Answer Key" so the paper can be printed without answers.
 function splitAnswerKey(md) {
-  const m = String(md || '').match(/\n\s*-{3,}\s*\n(?=\s*#{1,4}\s*(answer|answers|উত্তর))/i);
+  md = String(md || '');
+  const m = md.match(/\n\s*-{3,}\s*\n(?=\s*#{1,4}\s*(answer|answers|উত্তর))/i)
+    || md.match(/\n(?=[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*)?[ \t]*(?:answer[ \t]*key|answers|answer[ \t]*sheet|solutions|উত্তরমালা|উত্তর)[ \t]*:?[ \t]*(?:\*\*)?[ \t]*:?[ \t]*(?:\n|$))/i);
   if (!m) return { paper: md, answers: '' };
   return { paper: md.slice(0, m.index), answers: md.slice(m.index + m[0].length) };
 }

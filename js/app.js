@@ -789,8 +789,9 @@ function viewAI() {
       .filter(x => !ui.docsStudent || x.studentId === ui.docsStudent)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return head + `<div class="toolbar"><select data-filter="docsType" aria-label="Type"><option value="">All types</option>${['plan', 'exam', 'worksheet'].map(t => `<option value="${t}"${ui.docsType === t ? ' selected' : ''}>${AI_TOOLS[t]}</option>`).join('')}</select>
-      <select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select></div>
-      <div class="card"><div class="list">${docs.length ? docs.map(docRow).join('') : '<div class="empty">Nothing saved yet. Generate something and press Save.</div>'}</div></div>`;
+      <select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select>
+      <button class="btn" data-action="import-doc">Import Word / text file</button></div>
+      <div class="card"><div class="list">${docs.length ? docs.map(docRow).join('') : '<div class="empty">Nothing saved yet. Generate something and press Save, or import questions you wrote in Word.</div>'}</div></div>`;
   }
   const r = ui.aiResult && ui.aiResult.tool === tool ? ui.aiResult : null;
   return head + `<div class="card"><form class="form" id="ai-form">${aiFormHTML(tool)}
@@ -909,6 +910,133 @@ function fallbackCopy(text) {
   ta.value = text; document.body.appendChild(ta); ta.select();
   try { document.execCommand('copy'); toast('Copied'); } catch (e) { toast('Copy failed', 'error'); }
   ta.remove();
+}
+
+// ── Import (Word .docx / text) ───────────────────────────────
+let mammothLoading = null;
+function loadMammoth() {
+  if (window.mammoth) return Promise.resolve(window.mammoth);
+  mammothLoading = mammothLoading || new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'js/vendor/mammoth.browser.min.js';
+    s.onload = () => resolve(window.mammoth);
+    s.onerror = () => { mammothLoading = null; reject(new Error('Could not load the Word reader. Check your connection and try again.')); };
+    document.head.appendChild(s);
+  });
+  return mammothLoading;
+}
+
+// Converts mammoth's HTML into the Markdown subset renderMarkdown() understands.
+function htmlToMarkdown(html) {
+  const root = new DOMParser().parseFromString(html, 'text/html').body;
+  const wrap = (inner, mark) => {
+    const m = inner.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    return m[2] ? `${m[1]}${mark}${m[2]}${mark}${m[3]}` : inner;
+  };
+  const inline = node => {
+    let out = '';
+    node.childNodes.forEach(n => {
+      if (n.nodeType === 3) { out += n.textContent.replace(/\s+/g, ' '); return; }
+      if (n.nodeType !== 1) return;
+      const tag = n.tagName;
+      if (tag === 'UL' || tag === 'OL' || tag === 'IMG') return;
+      if (tag === 'BR') { out += ' '; return; }
+      const inner = inline(n);
+      if (tag === 'STRONG' || tag === 'B') out += wrap(inner, '**');
+      else if (tag === 'EM' || tag === 'I') out += wrap(inner, '*');
+      else if (tag === 'SUP') out += '^' + inner;
+      else if (tag === 'P' || tag === 'LI' || tag === 'DIV') out += inner + ' ';
+      else out += inner;
+    });
+    return out;
+  };
+  const clean = s => s.replace(/\s+/g, ' ').trim();
+  const blocks = [];
+  const listLines = (list, depth) => {
+    const lines = [];
+    let n = 1;
+    for (const li of list.children) {
+      if (li.tagName !== 'LI') continue;
+      const text = clean(inline(li));
+      if (text) lines.push('  '.repeat(depth) + (list.tagName === 'OL' ? `${n++}. ` : '- ') + text);
+      for (const sub of li.children) if (sub.tagName === 'UL' || sub.tagName === 'OL') lines.push(...listLines(sub, depth + 1));
+    }
+    return lines;
+  };
+  const walk = el => {
+    for (const c of el.children) {
+      const tag = c.tagName;
+      if (/^H[1-6]$/.test(tag)) {
+        const text = clean(inline(c));
+        if (text) blocks.push('#'.repeat(Math.min(4, Number(tag[1]))) + ' ' + text);
+      } else if (tag === 'P') {
+        const text = clean(inline(c));
+        if (text) blocks.push(text);
+      } else if (tag === 'UL' || tag === 'OL') {
+        const lines = listLines(c, 0);
+        if (lines.length) blocks.push(lines.join('\n'));
+      } else if (tag === 'TABLE') {
+        const rows = [...c.querySelectorAll('tr')]
+          .map(tr => [...tr.children].map(td => clean(inline(td)).replace(/\|/g, '/') || ' '))
+          .filter(r => r.length);
+        if (!rows.length) continue;
+        const cols = Math.max(...rows.map(r => r.length));
+        const line = r => '| ' + Array.from({ length: cols }, (_, i) => r[i] || ' ').join(' | ') + ' |';
+        blocks.push([line(rows[0]), '|' + ' --- |'.repeat(cols), ...rows.slice(1).map(line)].join('\n'));
+      } else {
+        walk(c);
+      }
+    }
+  };
+  walk(root);
+  return blocks.join('\n\n');
+}
+
+async function readImportFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.docx')) {
+    const mammoth = await loadMammoth();
+    let skipped = 0;
+    const res = await mammoth.convertToHtml(
+      { arrayBuffer: await file.arrayBuffer() },
+      { convertImage: mammoth.images.imgElement(() => { skipped++; return Promise.resolve({ src: '' }); }) }
+    );
+    return { content: htmlToMarkdown(res.value), skipped };
+  }
+  if (name.endsWith('.doc')) throw new Error('Old .doc files can\'t be read. In Word, use File → Save As → Word Document (.docx).');
+  const text = (await file.text()).replace(/\r/g, '');
+  return { content: name.endsWith('.md') ? text : text.split('\n').join('\n\n').replace(/\n{3,}/g, '\n\n'), skipped: 0 };
+}
+
+function importDocForm() {
+  openModal('Import questions', `<form class="form" id="f-import">
+      <label class="field">File *<input type="file" name="file" accept=".docx,.doc,.txt,.md" required></label>
+      <p class="muted small" style="margin:0">Word (.docx) or text file. Text, lists and tables are kept; pictures and equations are not. Put a heading <b>Answer Key</b> before the answers to print the paper without them.</p>
+      <label class="field">Title<input name="title" placeholder="Uses the file name if empty"></label>
+      <div class="form-row"><label class="field">Type<select name="type">${['exam', 'worksheet', 'plan'].map(t => `<option value="${t}">${AI_TOOLS[t]}</option>`).join('')}</select></label>
+        <label class="field">Student (optional)<select name="studentId">${studentOptions(ui.docsStudent || '', true, 'No student')}</select></label></div>
+      <div class="form-actions"><button class="btn primary" id="imp-go">Import</button></div></form>`,
+  body => {
+    const form = body.querySelector('#f-import');
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const file = form.file.files[0];
+      if (!file) return;
+      const btn = form.querySelector('#imp-go');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Reading…';
+      try {
+        const { content, skipped } = await readImportFile(file);
+        if (!content.trim()) throw new Error('No text found in this file.');
+        const d = formData(form);
+        const doc = { id: uid(), type: d.type, title: d.title || file.name.replace(/\.[^.]+$/, ''), content, studentId: d.studentId || '', meta: { importedFrom: file.name }, createdAt: new Date().toISOString() };
+        db.docs.push(doc); save(); render(); openDoc(doc);
+        toast(skipped ? `Imported. ${skipped} picture${skipped > 1 ? 's' : ''} couldn't be imported.` : 'Imported to your library');
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Import';
+        toast(err.message || 'Import failed', 'error');
+      }
+    };
+  });
 }
 
 function openDoc(doc) {
@@ -1126,6 +1254,7 @@ const ACTIONS = {
   }),
   'install': async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); },
   'open-doc': d => openDoc(db.docs.find(x => x.id === d.id)),
+  'import-doc': () => importDocForm(),
   'ai-save': () => {
     const r = ui.aiResult; if (!r || r.savedId) return;
     const doc = { id: uid(), type: r.tool, title: r.title, content: r.content, studentId: r.studentId, meta: r.meta, createdAt: new Date().toISOString() };

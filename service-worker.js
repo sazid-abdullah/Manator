@@ -1,8 +1,8 @@
 // Network-first so updates show up immediately; falls back to cache when offline.
-const CACHE = 'manator-v1';
+const CACHE = 'manator-v2';
 const ASSETS = [
   './', './index.html', './manifest.json', './icons/icon.svg', './css/style.css',
-  './js/store.js', './js/contracts.js', './js/ai.js', './js/app.js',
+  './js/store.js', './js/contracts.js', './js/ai.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
 ];
 
 self.addEventListener('install', e => {
