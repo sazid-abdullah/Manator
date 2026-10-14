@@ -279,3 +279,9 @@ details.sent summary { cursor: pointer; color: var(--muted); }
 details.sent pre { white-space: pre-wrap; background: var(--card2); padding: 10px 12px; border-radius: 10px; max-height: 280px; overflow: auto; font-size: 0.8rem; margin: 8px 0 0; }
 .money-chips { margin: 8px 0; }
 .money-chips .btn { white-space: normal; text-align: left; height: auto; }
+[hidden] { display: none !important; }
+.src-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 0.85rem; overflow-wrap: anywhere; }
+.src-x { border: none; background: none; color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.revise-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+.revise-row input { flex: 1 1 220px; min-width: 0; }
+.ai-check { margin-top: 4px; }

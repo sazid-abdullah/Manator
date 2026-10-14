@@ -183,7 +183,11 @@ async function callModel(provider, model, system, user, opts) {
   opts = opts || {};
   const key = (db.ai.keys[provider] || '').trim();
   const temperature = opts.temperature == null ? 0.6 : opts.temperature;
-  const maxTokens = opts.maxTokens || 8192;
+  // Newer Gemini models "think" before answering and that counts against the output limit.
+  const geminiMax = /gemini-(1\.|2\.0)/.test(model) ? 8192 : 32768;
+  const maxTokens = provider === 'gemini' ? Math.max(opts.maxTokens || 0, geminiMax) : opts.maxTokens || 8192;
+  const files = opts.files || [];
+  if (files.length && provider !== 'gemini') throw new Error('Only Google Gemini can read attached PDFs and photos.');
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
 
   if (provider === 'gemini') {
@@ -193,7 +197,7 @@ async function callModel(provider, model, system, user, opts) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
+        contents: [{ role: 'user', parts: [...files.map(x => ({ inlineData: { mimeType: x.mimeType, data: x.data } })), { text: user }] }],
         generationConfig: { temperature, maxOutputTokens: maxTokens },
       }),
     });
@@ -225,11 +229,66 @@ async function callModel(provider, model, system, user, opts) {
   return text;
 }
 
-const AI_SYSTEM = `You are an experienced private tutor and teacher-trainer. You write practical, classroom-ready material for one-to-one or small-group home tuition.
+const AI_SYSTEM = `You are an experienced private tutor, teacher-trainer and board-exam paper setter. You write practical, classroom-ready material for one-to-one or small-group home tuition, mostly for students in Bangladesh (NCTB curriculum, SSC/HSC boards, English version and English medium).
 Write in clean Markdown (headings, numbered lists, bold, and pipe tables where useful). No preamble or closing chit-chat: output only the document.
-Match the student's grade level and the named curriculum/board. Be accurate; never invent facts. When writing in Bangla, use correct Bangla script throughout.`;
+Match the student's class level and the named curriculum/board. Accuracy matters more than length: solve every question yourself before writing its answer, and if you are not sure an answer is correct, replace the question with one you are sure about. Never invent textbook-specific details (page numbers, exercise numbers, named examples from a book) unless source material is provided.
+When writing in Bangla, use correct, natural standard Bangla (প্রমিত বাংলা) in Bangla script throughout, with the subject's usual Bangla textbook terms; keep formulas, units and symbols in standard notation.`;
 
-function lessonPlanPrompt(f) {
+function cqStyle(f) {
+  if (f.cqStyle === '3part' || f.cqStyle === '4part') return f.cqStyle;
+  return /math|গণিত/i.test(f.subject || '') ? '3part' : '4part';
+}
+
+function examMarks(f) {
+  const fmt = f.format || 'custom';
+  if (fmt === 'custom') return Number(f.marks) || 50;
+  return (fmt !== 'mcq' ? (Number(f.cqAnswer) || 0) * 10 : 0) + (fmt !== 'cq' ? (Number(f.mcqCount) || 0) : 0);
+}
+
+function boardRules(f) {
+  const fmt = f.format || 'custom';
+  if (fmt === 'custom') return '';
+  const bn = /bangla/i.test(f.language || '');
+  const opt = bn ? '(ক) (খ) (গ) (ঘ)' : '(a) (b) (c) (d)';
+  const part = bn ? ['ক', 'খ', 'গ', 'ঘ'] : ['a', 'b', 'c', 'd'];
+  const out = [];
+  if (fmt !== 'mcq') {
+    const n = Number(f.cqCount) || 8, a = Math.min(Number(f.cqAnswer) || n, n);
+    out.push(`**Creative questions (সৃজনশীল প্রশ্ন), Bangladesh SSC/HSC board pattern:**
+- Write exactly ${n} creative questions; the instruction says the student answers any ${a}. Each is worth 10 marks.
+- Each starts with an original stimulus (উদ্দীপক): a new, short (3–6 sentence) situation, passage, experiment, data table or diagram description linked to the topic. Do not copy it from the textbook and do not give away the answers in it.
+${cqStyle(f) === '3part'
+    ? `- Then three parts, increasing in difficulty, all based on the stimulus: ${part[0]}. [2], ${part[1]}. [4], ${part[2]}. [4] (mathematics pattern).`
+    : `- Then four parts: ${part[0]}. knowledge (জ্ঞানমূলক) [1] – recall a definition, fact or term; ${part[1]}. comprehension (অনুধাবনমূলক) [2] – explain why/how; ${part[2]}. application (প্রয়োগমূলক) [3] – apply the concept to the stimulus; ${part[3]}. higher ability (উচ্চতর দক্ষতা) [4] – analyse, compare or evaluate using the stimulus.
+- ${part[2]} and ${part[3]} must not be answerable without the stimulus; ${part[0]} and ${part[1]} test core concepts of the same topic.`}
+- Every creative question covers a different concept or sub-topic; no two stimuli are alike.`);
+  }
+  if (fmt !== 'cq') {
+    const m = Number(f.mcqCount) || 25;
+    out.push(`**Multiple choice (বহুনির্বাচনি), board pattern:** exactly ${m} questions, 1 mark each.
+- Four options ${opt}, exactly one correct. Wrong options must be plausible (typical student mistakes) and similar in length. No "all of the above" / "none of the above".
+- Mix the board types: about 60% simple (সাধারণ বহুনির্বাচনি); about 25% multiple-completion (বহুপদী সমাপ্তিসূচক): three statements i, ii, iii followed by options "i ও ii", "i ও iii", "ii ও iii", "i, ii ও iii" (in English: "i and ii", …); about 15% situation-based sets (অভিন্ন তথ্যভিত্তিক): a short shared passage or figure followed by 2–3 questions.
+- Spread the correct option letters roughly evenly.
+- Format each MCQ as a numbered line with the question, then each option on its own line starting with its label, e.g.
+  1. Question text
+     ${opt.split(' ')[0]} first option`);
+  }
+  out.push(`**Answer key layout:** ${fmt !== 'cq' ? 'MCQ answers as a table: No. | Answer | One-line reason. ' : ''}${fmt !== 'mcq' ? 'For each creative question give a model answer for every part, with the marking points that earn each mark.' : ''}`);
+  return out.join('\n\n');
+}
+
+// src = { fileNames: [...], texts: [{ name, text }], mode: 'style' | 'only' }
+function sourcePrompt(src) {
+  if (!src || (!src.fileNames.length && !src.texts.length)) return '';
+  const what = src.mode === 'only'
+    ? `It is the textbook chapter / notes to teach from. Use only the facts, definitions, examples, terms and methods in it. If something you need is not in it, leave it out instead of guessing.`
+    : `It is a past paper or sample paper. First study its format, question types, mark split, topic coverage, difficulty and wording. Then write NEW questions in the same style and at the same level. Do not copy its questions; changing only names or numbers is not enough – change the situation or the angle.`;
+  const files = src.fileNames.length ? `\nAttached file(s): ${src.fileNames.join(', ')}.` : '';
+  const texts = src.texts.map(t => `\n<<<SOURCE: ${t.name}\n${t.text}\nSOURCE>>>`).join('\n');
+  return `\n## Source material from the tutor\n${what}${files}${texts}\n`;
+}
+
+function lessonPlanPrompt(f, src) {
   return `Create a lesson plan for one tuition session.
 
 - Grade/Class: ${f.grade || 'not specified'}
@@ -239,41 +298,50 @@ function lessonPlanPrompt(f) {
 - Curriculum/Board: ${f.curriculum || 'not specified'}
 - Student level: ${f.level || 'average'}
 - Language: ${f.language || 'English'}
-${f.recent ? `- Recently covered with this student: ${f.recent}\n` : ''}${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
+${f.recent ? `- Recently covered with this student: ${f.recent}\n` : ''}${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+Teach it the way a strong home tutor does: start from what the student already knows, explain with simple everyday examples (from life in Bangladesh where they help), then build up to exam level. Pitch everything at the stated class and student level.
+
 Include these sections:
 1. **Learning objectives** (3–5, measurable)
-2. **Prior knowledge check** (2–3 quick questions)
+2. **Prior knowledge check** (2–3 quick questions, with expected answers)
 3. **Timeline** – a table with columns: Time (min) | Activity | What the tutor does | What the student does. Times must add up to ${f.duration || 60} minutes.
-4. **Key explanations & worked examples** (with full solutions)
+4. **Key explanations & worked examples** – the actual explanation the tutor will give (not just headings), key definitions/formulas, and 2–4 fully worked examples from easy to exam level.
 5. **Practice questions** (5–8, increasing difficulty, answers at the end of this section)
-6. **Common mistakes to watch for**
-7. **Homework** (short and specific)
-8. **Quick check for next session** (3 recap questions)`;
+6. **Common mistakes and misconceptions** – and how to correct each one
+7. **If the student struggles / finishes early** – one easier step and one challenge
+8. **How this topic comes in exams** – for SSC/HSC/NCTB-type curricula: one creative question (stimulus with parts) and three board-style MCQs with answers; for other curricula, typical exam questions with answers
+9. **Homework** (short and specific)
+10. **Quick check for next session** (3 recap questions)`;
 }
 
-function examPrompt(f) {
-  const types = (f.types && f.types.length ? f.types : ['Multiple choice', 'Short answer']).join(', ');
+function examPrompt(f, src) {
+  const fmt = f.format || 'custom';
+  const marks = examMarks(f);
+  const types = fmt === 'custom' ? (f.types && f.types.length ? f.types : ['Multiple choice', 'Short answer']).join(', ')
+    : { cq: 'Creative questions (CQ)', mcq: 'Multiple choice (MCQ)', board: 'MCQ section and creative question (CQ) section' }[fmt];
   return `Create an exam paper.
 
 - Grade/Class: ${f.grade || 'not specified'}
 - Subject: ${f.subject}
-- Topics covered: ${f.topics}
+- Topics covered: ${f.topics || (src && (src.fileNames.length || src.texts.length) ? 'the same topics as the source material' : 'not specified')}
 - Curriculum/Board: ${f.curriculum || 'not specified'}
-- Total marks: ${f.marks || 50}
+- Total marks: ${marks}
 - Time allowed: ${f.duration || 60} minutes
 - Difficulty: ${f.difficulty || 'mixed (easy → hard)'}
 - Question types: ${types}
 - Language: ${f.language || 'English'}
-${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
+${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+${boardRules(f)}
+
 Rules:
 - Start with a header: exam title, subject, class, time, total marks, and a line for student name and date.
 - Group questions into sections by type, with clear instructions and marks per question shown like **[2]**.
-- The marks of all questions MUST add up to exactly ${f.marks || 50}. Show a section-wise marks summary.
-- Only test the listed topics, at the stated grade level.
-${f.answerKey ? '- After the paper, add a line containing only "---" and then a section titled "## Answer Key" with correct answers, brief working, and a marking guide.' : '- Do not include answers.'}`;
+- The marks of all questions the student must answer MUST add up to exactly ${marks}. Show a section-wise marks summary.
+- Only test the listed topics, at the stated class level. No two questions test the same thing.
+${f.answerKey ? '- After the paper, add a line containing only "---" and then a section titled "## Answer Key" with correct answers, brief working, and a marking guide. Check every answer before writing it.' : '- Do not include answers.'}`;
 }
 
-function worksheetPrompt(f) {
+function worksheetPrompt(f, src) {
   return `Create a practice worksheet.
 
 - Grade/Class: ${f.grade || 'not specified'}
@@ -282,8 +350,61 @@ function worksheetPrompt(f) {
 - Number of questions: ${f.count || 15}
 - Difficulty: ${f.difficulty || 'mixed (easy → hard)'}
 - Language: ${f.language || 'English'}
-${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
-Start with a short "Remember" box of key formulas/rules, then numbered questions grouped from easy to hard. After a line containing only "---", add "## Answers" with brief solutions.`;
+${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+Start with a short "Remember" box of key formulas/rules, then numbered questions grouped from easy to hard, covering different sub-skills of the topic (no near-duplicates). After a line containing only "---", add "## Answers" with brief solutions. Check every answer before writing it.`;
+}
+
+const CHECK_SYSTEM = `You are a strict, experienced exam moderator and board examiner. You check papers that someone else wrote. You are careful and honest: you report only real problems, and you never rewrite the paper.`;
+
+function checkPrompt(tool, f, content, src) {
+  const req = tool === 'exam'
+    ? `Requirements it must meet: class ${f.grade || 'not specified'}, subject ${f.subject}, total marks ${examMarks(f)}, language ${f.language || 'English'}.\n${boardRules(f)}`
+    : `Requirements: class ${f.grade || 'not specified'}, subject ${f.subject}, ${f.count || 15} questions, language ${f.language || 'English'}.`;
+  return `Check this ${tool === 'exam' ? 'exam paper' : 'worksheet'} before it is given to a student.
+
+${req}
+${sourcePrompt(src)}
+Do this:
+1. Solve every question yourself, independently, then compare with the answer key.
+2. Look for: wrong answers in the key; questions that are wrong, ambiguous or unanswerable; MCQs with no correct option or more than one; creative-question parts that don't match their level or marks or don't use the stimulus; marks that don't add up to the total; the wrong number of questions; duplicate questions; content off the topic or wrong for the class level; factual errors${src && (src.fileNames.length || src.texts.length) ? ' or facts not supported by the source material' : ''}; poor language, spelling or Bangla grammar.
+
+Reply in English. The first line must be exactly "VERDICT: OK" or "VERDICT: PROBLEMS".
+If there are problems, then give a numbered list. Each item: **Q<number>** – what is wrong – how to fix it (including the correct answer). Nothing else.
+
+<<<PAPER
+${content}
+PAPER>>>`;
+}
+
+function parseCheck(text) {
+  const m = String(text || '').match(/VERDICT:\s*(OK|PROBLEMS)/i);
+  const report = String(text || '').replace(/^[\s\S]*?VERDICT:\s*(OK|PROBLEMS)\s*/i, '').trim();
+  return { ok: !!m && m[1].toUpperCase() === 'OK' && !/\*\*Q\d/.test(report), report: m ? report : String(text || '').trim() };
+}
+
+function revisePrompt(tool, f, content, instruction, src) {
+  return `Below is a ${tool === 'plan' ? 'lesson plan' : tool === 'exam' ? 'exam paper' : 'worksheet'} you wrote. Revise it.
+
+Instruction from the tutor:
+${instruction}
+
+Rules:
+- Change only what the instruction needs. Keep every other question, its numbering and its wording exactly the same.
+- Keep the answer key in step with any question you change.${tool === 'exam' ? ` Keep the total marks at ${examMarks(f)}.` : ''}
+${tool === 'exam' ? boardRules(f) : ''}
+${sourcePrompt(src)}
+Output the complete revised document (including any answer key) and nothing else.
+
+<<<DOCUMENT
+${content}
+DOCUMENT>>>`;
+}
+
+// Strips a ```markdown fence some models wrap the whole document in.
+function cleanDoc(text) {
+  const t = String(text || '').trim();
+  const m = t.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return m ? m[1].trim() : t;
 }
 
 // Minimal Markdown → HTML. Input is escaped first, so AI output cannot inject markup.

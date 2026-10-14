@@ -10,6 +10,7 @@ const ui = {
   aiDraft: {},
   aiResult: null,
   aiBusy: false,
+  aiSources: {},
   docsType: '',
   docsStudent: '',
   moneyQ: '',
@@ -903,9 +904,9 @@ const LANGS = ['English', 'Bangla', 'English + Bangla'];
 function draft(tool) {
   if (!ui.aiDraft[tool]) {
     ui.aiDraft[tool] = {
-      plan: { studentId: '', grade: '', curriculum: '', subject: '', topic: '', duration: 60, level: 'average', language: 'English', notes: '' },
-      exam: { studentId: '', grade: '', curriculum: '', subject: '', topics: '', range: '30', marks: 50, duration: 60, difficulty: 'mixed (easy → hard)', types: ['Multiple choice (MCQ)', 'Short answer'], answerKey: true, language: 'English', notes: '' },
-      worksheet: { studentId: '', grade: '', subject: '', topic: '', count: 15, difficulty: 'mixed (easy → hard)', language: 'English', notes: '' },
+      plan: { studentId: '', grade: '', curriculum: '', subject: '', topic: '', duration: 60, level: 'average', language: 'English', notes: '', sourceText: '', sourceMode: 'only' },
+      exam: { studentId: '', grade: '', curriculum: '', subject: '', topics: '', range: '30', format: 'custom', cqCount: 8, cqAnswer: 5, cqStyle: 'auto', mcqCount: 25, marks: 50, duration: 60, difficulty: 'mixed (easy → hard)', types: ['Multiple choice (MCQ)', 'Short answer'], answerKey: true, check: true, language: 'English', notes: '', sourceText: '', sourceMode: 'style' },
+      worksheet: { studentId: '', grade: '', subject: '', topic: '', count: 15, difficulty: 'mixed (easy → hard)', check: true, language: 'English', notes: '', sourceText: '', sourceMode: 'style' },
     }[tool] || {};
   }
   return ui.aiDraft[tool];
@@ -933,6 +934,26 @@ function topicsFromLessons(studentId, subject, range) {
   return [...new Set(lessons.map(l => l.topics.trim()))].join('\n');
 }
 
+const EXAM_FORMATS = [['custom', 'Choose question types'], ['board', 'Board: MCQ + creative questions (full paper)'], ['cq', 'Board: creative questions only (সৃজনশীল)'], ['mcq', 'Board: MCQ only (বহুনির্বাচনি)']];
+function fmtShows(k, fmt) {
+  if (k === 'custom') return fmt === 'custom';
+  if (k === 'cq') return fmt === 'cq' || fmt === 'board';
+  if (k === 'mcq') return fmt === 'mcq' || fmt === 'board';
+  return fmt !== 'custom';
+}
+function fmtSize(n) { return n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`; }
+function aiSources(tool) { return (ui.aiSources[tool] = ui.aiSources[tool] || []); }
+
+function sourceFieldHTML(tool) {
+  const d = draft(tool);
+  return `<div class="field"><span class="muted small" style="font-weight:500">Past paper, textbook chapter or notes (optional)</span>
+      <div class="chips" style="margin:6px 0">${aiSources(tool).map(x => `<span class="src-chip">${esc(x.name)} <span class="muted">${esc(fmtSize(x.size))}</span><button type="button" class="src-x" data-action="src-remove" data-id="${x.id}" aria-label="Remove ${esc(x.name)}">×</button></span>`).join('')}
+        <label class="btn sm">+ Add PDF, photo or Word file<input type="file" id="src-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt,.md" multiple hidden></label></div>
+      <textarea name="sourceText" rows="3" placeholder="…or paste text from the book or a past paper">${esc(d.sourceText || '')}</textarea></div>
+    <label class="field">How to use it<select name="sourceMode"><option value="style"${d.sourceMode !== 'only' ? ' selected' : ''}>Make similar new questions (copy its style and pattern)</option><option value="only"${d.sourceMode === 'only' ? ' selected' : ''}>Use only this material (textbook chapter, notes)</option></select></label>
+    <div class="help">Files and text you add here are sent to the AI, so remove students' names first. They aren't saved, and you need to add them again after reloading. PDFs and photos work best with Google Gemini, which also reads scanned and Bangla pages. Other providers only get the text inside a PDF and can't read photos.</div>`;
+}
+
 function selectOpts(list, val) { return list.map(x => `<option${x === val ? ' selected' : ''}>${esc(x)}</option>`).join(''); }
 
 function aiFormHTML(tool) {
@@ -947,20 +968,30 @@ function aiFormHTML(tool) {
   if (tool === 'plan') {
     return `${common}<label class="field">Topic *<input name="topic" required value="${esc(d.topic)}" placeholder="e.g. Pythagoras theorem"></label>
       <div class="form-row"><label class="field">Session minutes<input name="duration" type="number" min="15" step="5" value="${esc(d.duration)}"></label>
-        <label class="field">Student level<select name="level">${selectOpts(['weak — needs basics', 'average', 'strong — needs challenge'], d.level)}</select></label>${lang}</div>${notes}
+        <label class="field">Student level<select name="level">${selectOpts(['weak — needs basics', 'average', 'strong — needs challenge'], d.level)}</select></label>${lang}</div>${notes}${sourceFieldHTML(tool)}
       <div class="help">If a student is selected, their last few logged topics are included so the plan builds on them.</div>`;
   }
   if (tool === 'exam') {
-    return `${common}<label class="field">Topics to test *<textarea name="topics" rows="4" required placeholder="One topic per line">${esc(d.topics)}</textarea></label>
+    const fmt = d.format || 'custom';
+    const vis = k => (fmtShows(k, fmt) ? '' : ' hidden');
+    return `${common}<label class="field">Topics to test<textarea name="topics" rows="4" placeholder="One topic per line (can be left empty if you attach a past paper)">${esc(d.topics)}</textarea></label>
       <div class="actions" style="align-items:center"><button type="button" class="btn sm" id="fill-topics">Fill from class log</button>
         <select name="range" style="width:auto">${[['7', 'Last 7 days'], ['14', 'Last 14 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['all', 'All time']].map(([v, t]) => `<option value="${v}"${d.range === v ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
-      <div class="form-row"><label class="field">Total marks<input name="marks" type="number" min="5" value="${esc(d.marks)}"></label>
+      <label class="field">Paper format<select name="format">${EXAM_FORMATS.map(([v, t]) => `<option value="${v}"${fmt === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+      <div class="form-row" data-fmt="cq"${vis('cq')}><label class="field">Creative questions<input name="cqCount" type="number" min="1" max="15" value="${esc(d.cqCount)}"></label>
+        <label class="field">Student answers any<input name="cqAnswer" type="number" min="1" max="15" value="${esc(d.cqAnswer)}"></label>
+        <label class="field">CQ parts<select name="cqStyle">${[['auto', 'Auto (maths: ক2 খ4 গ4)'], ['4part', 'ক1 খ2 গ3 ঘ4'], ['3part', 'ক2 খ4 গ4 (maths)']].map(([v, t]) => `<option value="${v}"${d.cqStyle === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label></div>
+      <div class="form-row" data-fmt="mcq"${vis('mcq')}><label class="field">MCQs (1 mark each)<input name="mcqCount" type="number" min="1" max="60" value="${esc(d.mcqCount)}"></label></div>
+      <div class="help" data-fmt="board" id="exam-total"${vis('board')}>Total marks: ${examMarks(d)}</div>
+      <div class="form-row"><label class="field" data-fmt="custom"${vis('custom')}>Total marks<input name="marks" type="number" min="5" value="${esc(d.marks)}"></label>
         <label class="field">Time (minutes)<input name="duration" type="number" min="10" step="5" value="${esc(d.duration)}"></label>${diff}${lang}</div>
-      <div class="field"><span class="muted small" style="font-weight:500">Question types</span><div class="checks" style="margin-top:4px">${EXAM_TYPES.map(t => `<label class="check"><input type="checkbox" name="types" value="${esc(t)}"${d.types.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div></div>
-      <label class="check"><input type="checkbox" name="answerKey"${d.answerKey ? ' checked' : ''}> Include answer key (printed separately)</label>${notes}`;
+      <div class="field" data-fmt="custom"${vis('custom')}><span class="muted small" style="font-weight:500">Question types</span><div class="checks" style="margin-top:4px">${EXAM_TYPES.map(t => `<label class="check"><input type="checkbox" name="types" value="${esc(t)}"${d.types.includes(t) ? ' checked' : ''}> ${esc(t)}</label>`).join('')}</div></div>
+      <label class="check"><input type="checkbox" name="answerKey"${d.answerKey ? ' checked' : ''}> Include answer key (printed separately)</label>
+      <label class="check"><input type="checkbox" name="check"${d.check ? ' checked' : ''}> Check the answers with a second AI pass</label>${notes}${sourceFieldHTML(tool)}`;
   }
   return `${common}<label class="field">Topic *<input name="topic" required value="${esc(d.topic)}"></label>
-    <div class="form-row"><label class="field">Questions<input name="count" type="number" min="3" max="50" value="${esc(d.count)}"></label>${diff}${lang}</div>${notes}`;
+    <div class="form-row"><label class="field">Questions<input name="count" type="number" min="3" max="50" value="${esc(d.count)}"></label>${diff}${lang}</div>
+    <label class="check"><input type="checkbox" name="check"${d.check ? ' checked' : ''}> Check the answers with a second AI pass</label>${notes}${sourceFieldHTML(tool)}`;
 }
 
 function docRow(doc) {
@@ -987,19 +1018,31 @@ function viewAI() {
   }
   const r = ui.aiResult && ui.aiResult.tool === tool ? ui.aiResult : null;
   return head + `<div class="card"><form class="form" id="ai-form">${aiFormHTML(tool)}
-      <div class="form-actions"><button class="btn primary" id="ai-go"${ui.aiBusy ? ' disabled' : ''}>${ui.aiBusy ? '<span class="spinner"></span> Generating…' : `Generate ${AI_TOOLS[tool].toLowerCase()}`}</button></div></form></div>
+      <div class="form-actions"><button class="btn primary" id="ai-go"${ui.aiBusy ? ' disabled' : ''}>${ui.aiBusy ? `<span class="spinner"></span> ${esc(ui.aiBusy)}` : `Generate ${AI_TOOLS[tool].toLowerCase()}`}</button></div></form></div>
     <div id="ai-output">${r ? aiResultHTML(r) : ''}</div>`;
 }
 
 function aiResultHTML(r) {
   if (r.error) return `<div class="notice err ai-output"><b>Couldn't generate.</b> ${esc(r.error)}</div>`;
   const hasKey = !!splitAnswerKey(r.content).answers;
+  const busy = ui.aiBusy ? ' disabled' : '';
+  const c = r.check;
+  const check = ui.aiBusy ? `<div class="notice ai-check"><span class="spinner"></span> ${esc(ui.aiBusy)}</div>`
+    : !c ? ''
+      : c.error ? `<div class="notice err ai-check"><b>Couldn't check the paper.</b> ${esc(c.error)}</div>`
+        : c.ok ? '<div class="notice ai-check"><b>AI check: no problems found.</b> The check can miss mistakes too, so read the paper before you use it.</div>'
+          : `<div class="notice warn ai-check"><b>AI check found possible problems:</b><div class="doc">${renderMarkdown(c.report)}</div>
+            <div class="actions" style="margin-top:8px"><button class="btn sm primary" data-action="ai-fix"${busy}>Fix these problems</button></div></div>`;
   return `<div class="card ai-output"><div class="card-head"><h2>${esc(r.title)}</h2>
       <div class="actions">${r.savedId ? '<span class="badge green">Saved</span>' : '<button class="btn sm primary" data-action="ai-save">Save</button>'}
         <button class="btn sm" data-action="ai-copy">Copy</button>
         <button class="btn sm" data-action="ai-print">Print</button>
         ${hasKey ? '<button class="btn sm" data-action="ai-print-paper">Print without answers</button>' : ''}
-        <button class="btn sm ghost" data-action="ai-regen">Regenerate</button></div></div>
+        ${r.tool !== 'plan' ? `<button class="btn sm" data-action="ai-check"${busy}>Check paper</button>` : ''}
+        ${r.prev ? `<button class="btn sm ghost" data-action="ai-undo"${busy}>Undo change</button>` : ''}
+        <button class="btn sm ghost" data-action="ai-regen"${busy}>Regenerate</button></div></div>
+    ${check}
+    <form class="revise-row" id="ai-revise"><input name="instruction" aria-label="Change request" placeholder="Change something, e.g. &quot;Replace Q3 with a harder question&quot;"><button class="btn sm"${busy}>Change</button></form>
     <div class="doc">${renderMarkdown(r.content)}</div></div>`;
 }
 
@@ -1011,6 +1054,7 @@ function readAIForm(form, tool) {
     d.types = [...form.querySelectorAll('[name=types]:checked')].map(x => x.value);
     d.answerKey = form.answerKey.checked;
   }
+  if (form.check) d.check = form.check.checked;
   return d;
 }
 
@@ -1048,32 +1092,178 @@ function bindAI() {
     form.topics.value = t;
   };
   form.onsubmit = e => { e.preventDefault(); generateAI(readAIForm(form, tool), tool); };
+  if (form.format) {
+    const syncFmt = () => {
+      const fmt = form.format.value;
+      form.querySelectorAll('[data-fmt]').forEach(el => { el.hidden = !fmtShows(el.dataset.fmt, fmt); });
+      form.querySelector('#exam-total').textContent = `Total marks: ${examMarks(formData(form))}`;
+    };
+    form.addEventListener('input', syncFmt);
+    form.addEventListener('change', syncFmt);
+  }
+  const sf = form.querySelector('#src-file');
+  if (sf) sf.onchange = async () => {
+    const files = [...sf.files];
+    readAIForm(form, tool);
+    await addSourceFiles(tool, files);
+    render();
+  };
+  const rv = document.getElementById('ai-revise');
+  if (rv) rv.onsubmit = e => {
+    e.preventDefault();
+    const text = rv.instruction.value.trim();
+    if (!text) return toast('Write what to change first');
+    reviseAIResult(ui.aiResult, text);
+  };
 }
 
 async function generateAI(d, tool) {
   if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
   if (ui.aiBusy) return;
   const f = { ...d };
+  if (tool === 'exam' && !f.topics && !aiSources(tool).length && !f.sourceText) return toast('Add the topics to test, or attach a past paper', 'error');
   if (tool === 'plan' && f.studentId) {
     f.recent = studentLessons(f.studentId).filter(l => l.status === 'taught' && l.topics && (!f.subject || !l.subject || l.subject.toLowerCase() === f.subject.toLowerCase()))
       .slice(0, 5).map(l => l.topics.replace(/\s+/g, ' ')).join('; ');
   }
-  const prompt = tool === 'plan' ? lessonPlanPrompt(f) : tool === 'exam' ? examPrompt(f) : worksheetPrompt(f);
   const title = tool === 'plan' ? `Lesson plan: ${f.subject} – ${f.topic}`
-    : tool === 'exam' ? `Exam: ${f.subject}${f.grade ? ' (' + f.grade + ')' : ''} – ${f.marks} marks`
+    : tool === 'exam' ? `Exam: ${f.subject}${f.grade ? ' (' + f.grade + ')' : ''} – ${examMarks(f)} marks`
       : `Worksheet: ${f.subject} – ${f.topic}`;
-  ui.aiBusy = true;
+  ui.aiBusy = aiSources(tool).length ? 'Reading your files and writing…' : 'Generating…';
+  ui.aiResult = null;
   render();
   try {
-    const content = await callAI(AI_SYSTEM, prompt);
-    ui.aiResult = { tool, title, content, studentId: f.studentId || null, meta: { subject: f.subject, grade: f.grade } };
+    const src = await prepareSources(tool, f);
+    const prompt = tool === 'plan' ? lessonPlanPrompt(f, src) : tool === 'exam' ? examPrompt(f, src) : worksheetPrompt(f, src);
+    const content = cleanDoc(await callAI(AI_SYSTEM, prompt, { files: src.files }));
+    ui.aiResult = { tool, title, content, studentId: f.studentId || null, meta: { subject: f.subject, grade: f.grade }, ctx: { f, src } };
   } catch (err) {
     ui.aiResult = { tool, error: err.message || String(err) };
   } finally {
     ui.aiBusy = false;
-    if (parseHash().parts[0] === 'ai') render();
-    else toast(ui.aiResult.error ? 'AI generation failed' : `${AI_TOOLS[tool]} ready`, ui.aiResult.error ? 'error' : null, { label: 'Open', fn: () => { ui.aiTool = tool; location.hash = '#/ai'; } });
   }
+  if (!ui.aiResult.error && tool !== 'plan' && f.check) return checkAIResult(ui.aiResult);
+  aiDone(tool);
+}
+
+function aiDone(tool) {
+  if (parseHash().parts[0] === 'ai') return render();
+  const r = ui.aiResult;
+  toast(r && r.error ? 'AI generation failed' : `${AI_TOOLS[tool]} ready`, r && r.error ? 'error' : null, { label: 'Open', fn: () => { ui.aiTool = tool; location.hash = '#/ai'; } });
+}
+function aiRender() { if (parseHash().parts[0] === 'ai') render(); }
+
+async function checkAIResult(r) {
+  if (!r || !r.ctx || ui.aiBusy) return;
+  ui.aiBusy = 'Checking the answers…';
+  r.check = null;
+  aiRender();
+  try {
+    r.check = parseCheck(await callAI(CHECK_SYSTEM, checkPrompt(r.tool, r.ctx.f, r.content, r.ctx.src), { temperature: 0.2, files: r.ctx.src.files }));
+  } catch (err) {
+    r.check = { error: err.message || String(err) };
+  } finally {
+    ui.aiBusy = false;
+  }
+  aiDone(r.tool);
+}
+
+async function reviseAIResult(r, instruction) {
+  if (!r || !r.ctx || ui.aiBusy) return;
+  ui.aiBusy = 'Making the change…';
+  aiRender();
+  try {
+    const out = cleanDoc(await callAI(AI_SYSTEM, revisePrompt(r.tool, r.ctx.f, r.content, instruction, r.ctx.src), { files: r.ctx.src.files }));
+    r.prev = r.content;
+    r.content = out;
+    r.savedId = null;
+    r.check = null;
+  } catch (err) {
+    toast(`Couldn't make the change: ${err.message || err}`, 'error');
+  } finally {
+    ui.aiBusy = false;
+  }
+  aiDone(r.tool);
+}
+
+// ── Source material for the AI (past papers, textbook pages) ─
+const SOURCE_FILE_MAX = 14 * 1024 * 1024;
+const SOURCE_TEXT_MAX = 60000;
+
+async function addSourceFiles(tool, files) {
+  const list = aiSources(tool);
+  for (const file of files) {
+    const name = file.name;
+    const low = name.toLowerCase();
+    try {
+      if (/\.(pdf|png|jpe?g|webp)$/.test(low)) {
+        const used = list.reduce((n, x) => n + (x.bytes ? x.size : 0), 0);
+        if (used + file.size > SOURCE_FILE_MAX) throw new Error(`"${name}" is too big. PDFs and photos can be up to 14 MB in total.`);
+        const pdf = low.endsWith('.pdf');
+        list.push({ id: uid(), name, size: file.size, kind: pdf ? 'pdf' : 'image', mime: pdf ? 'application/pdf' : file.type || 'image/jpeg', bytes: await file.arrayBuffer() });
+      } else {
+        const { content } = await readImportFile(file);
+        if (!content.trim()) throw new Error(`No text found in "${name}".`);
+        list.push({ id: uid(), name, size: file.size, kind: 'text', text: content });
+      }
+    } catch (err) {
+      toast(err.message || `Couldn't read "${name}"`, 'error');
+    }
+  }
+}
+
+function toBase64(buf) {
+  const b = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+let pdfjsLoading = null;
+function loadPdfjs() {
+  pdfjsLoading = pdfjsLoading || import('./vendor/pdfjs/pdf.min.mjs').then(m => {
+    m.GlobalWorkerOptions.workerSrc = new URL('js/vendor/pdfjs/pdf.worker.min.mjs', document.baseURI).href;
+    return m;
+  }, () => { pdfjsLoading = null; throw new Error('Could not load the PDF reader. Check your connection and try again.'); });
+  return pdfjsLoading;
+}
+
+async function pdfText(bytes) {
+  const pdfjs = await loadPdfjs();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), isEvalSupported: false }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const tc = await (await pdf.getPage(i)).getTextContent();
+    pages.push(tc.items.map(it => it.str + (it.hasEOL ? '\n' : ' ')).join(''));
+  }
+  return { text: pages.join('\n\n'), pages: pdf.numPages };
+}
+
+async function prepareSources(tool, f) {
+  const src = { files: [], fileNames: [], texts: [], mode: f.sourceMode === 'only' ? 'only' : 'style' };
+  const gemini = db.ai.provider === 'gemini';
+  for (const x of aiSources(tool)) {
+    if (x.kind === 'text') src.texts.push({ name: x.name, text: x.text });
+    else if (gemini) {
+      x.b64 = x.b64 || toBase64(x.bytes);
+      src.files.push({ mimeType: x.mime, data: x.b64 });
+      src.fileNames.push(x.name);
+    } else if (x.kind === 'image') {
+      throw new Error(`Only Google Gemini can read photos like "${x.name}". Switch to Gemini in Settings → AI, or paste the text instead.`);
+    } else {
+      const { text, pages } = await pdfText(x.bytes);
+      if (text.replace(/\s/g, '').length < 40 * pages) throw new Error(`"${x.name}" looks like a scanned PDF with no text inside. Switch to Google Gemini in Settings → AI, which can read scanned pages.`);
+      src.texts.push({ name: x.name, text });
+    }
+  }
+  if (f.sourceText) src.texts.push({ name: 'Pasted text', text: f.sourceText });
+  let left = SOURCE_TEXT_MAX;
+  src.texts = src.texts.filter(t => t.text.trim() && left > 0).map(t => {
+    const text = t.text.length > left ? t.text.slice(0, left) + '\n[…the rest was cut because it was too long]' : t.text;
+    left -= t.text.length;
+    return { name: t.name, text };
+  });
+  return src;
 }
 
 function printMarkdown(title, md) {
@@ -1269,7 +1459,7 @@ function viewSettings() {
         <div class="form-actions"><button class="btn primary">Save profile</button></div></form></div>
 
       <div class="card"><h2>AI provider (free)</h2>
-        <p class="muted small" style="margin-bottom:12px">Only the class, subject and topics are sent to the AI. Student names, phone numbers and money are never sent. Your key stays in this browser.</p>
+        <p class="muted small" style="margin-bottom:12px">Only the class, subject, topics and any file or text you attach are sent to the AI. Student names, phone numbers and money are never sent. Your key stays in this browser.</p>
         <form class="form" id="f-ai">
           <label class="field">Provider<select name="provider">${Object.entries(AI_PROVIDERS).map(([k, v]) => `<option value="${k}"${k === prov ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
           <div class="notice">${esc(p.note.replace('{origin}', location.origin))} ${p.needsKey ? `Get a free key: <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(p.keyUrl.replace('https://', ''))}</a>` : `<a href="${p.keyUrl}" target="_blank" rel="noopener">Download Ollama</a>`}</div>
@@ -1492,6 +1682,15 @@ const ACTIONS = {
   'ai-print': () => ui.aiResult && printMarkdown(ui.aiResult.title, ui.aiResult.content),
   'ai-print-paper': () => ui.aiResult && printMarkdown(ui.aiResult.title, splitAnswerKey(ui.aiResult.content).paper),
   'ai-regen': () => generateAI(draft(ui.aiTool), ui.aiTool),
+  'ai-check': () => checkAIResult(ui.aiResult),
+  'ai-fix': () => { const r = ui.aiResult; if (r && r.check && r.check.report) reviseAIResult(r, `Fix these problems that a checker found. Where the checker is wrong, leave that question as it is.\n${r.check.report}`); },
+  'ai-undo': () => { const r = ui.aiResult; if (!r || !r.prev || ui.aiBusy) return; r.content = r.prev; r.prev = null; r.check = null; r.savedId = null; render(); },
+  'src-remove': d => {
+    const form = document.getElementById('ai-form');
+    if (form) readAIForm(form, ui.aiTool);
+    ui.aiSources[ui.aiTool] = aiSources(ui.aiTool).filter(x => x.id !== d.id);
+    render();
+  },
 };
 
 document.addEventListener('click', e => {

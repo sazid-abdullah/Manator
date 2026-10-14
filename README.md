@@ -7,6 +7,9 @@ Personal tuition manager: students, daily lesson log, fee contracts, money track
 - **Contracts** – a fee every N days, N months, or N classes, paid in advance or after the cycle. Shows what's due, overdue, and paid.
 - **Money** – payments, expenses, monthly income/net, who owes you, CSV export, savings goals (how much to save per month for a big purchase) and an optional AI money advisor that only sees totals, never names.
 - **AI** – lesson plans, exam papers (with separate answer key) and worksheets using free providers (or import papers you wrote in Word .docx / text): Google Gemini, Groq, OpenRouter free models, or local Ollama. Only class/subject/topics are sent; names, phone numbers and money never leave the device.
+  - Exam papers can follow the Bangladesh board pattern: creative questions (stimulus + ক/খ/গ/ঘ, or ক2 খ4 গ4 for maths) and board-style MCQ, with exact marks.
+  - Attach a past paper or textbook pages (PDF, photo, Word or text) so the AI writes similar new questions, or teaches only from that material. Gemini reads PDFs and photos directly (including scans); other providers get the PDF's text.
+  - A second AI pass checks the answers and lists possible problems; "Fix these problems" or the change box revises the paper without starting over.
 - **Backup** – everything lives in your browser (`localStorage`). Download a backup file regularly and restore it on another device.
 
 ## Run
