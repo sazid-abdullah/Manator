@@ -1274,8 +1274,7 @@ function viewSettings() {
           <label class="field">Provider<select name="provider">${Object.entries(AI_PROVIDERS).map(([k, v]) => `<option value="${k}"${k === prov ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
           <div class="notice">${esc(p.note.replace('{origin}', location.origin))} ${p.needsKey ? `Get a free key: <a href="${p.keyUrl}" target="_blank" rel="noopener">${esc(p.keyUrl.replace('https://', ''))}</a>` : `<a href="${p.keyUrl}" target="_blank" rel="noopener">Download Ollama</a>`}</div>
           ${p.needsKey ? `<label class="field">API key<input name="key" type="password" autocomplete="off" value="${esc(db.ai.keys[prov] || '')}" placeholder="Paste your ${esc(p.name)} key"></label>` : ''}
-          <label class="field">Model<input name="model" list="model-list" value="${esc(aiModel(prov))}"><datalist id="model-list">${p.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist></label>
-          <div class="help">Suggested: ${p.models.map(esc).join(', ')}. If a model stops working, try another or type a newer name.</div>
+          ${modelFieldHTML(prov)}
           <div class="form-actions"><button type="button" class="btn" id="ai-test">Test connection</button><button class="btn primary">Save AI settings</button></div>
         </form></div>
 
@@ -1293,6 +1292,21 @@ function viewSettings() {
     </div>`;
 }
 
+function modelFieldHTML(prov) {
+  const c = cachedModels(prov);
+  const list = c ? c.list : [];
+  const chosen = chosenModel(prov);
+  const auto = autoModels(prov)[0];
+  const opts = [...list, ...(chosen && !list.includes(chosen) ? [chosen] : [])];
+  const when = c ? new Date(c.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return `<label class="field">Model<select name="model">
+      <option value="">Auto – strongest available${c && auto ? ` (now ${esc(auto)})` : ''}</option>
+      ${opts.map(m => `<option value="${esc(m)}"${m === chosen ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
+    <div class="help">${c ? `${list.length} models available, checked ${esc(when)}.` : 'The model list loads from the provider when you test or refresh.'}
+      Auto picks the strongest model and moves to the next one by itself if a model is retired or hits its free limit.
+      <button type="button" class="btn sm ghost" id="ai-refresh">Refresh list</button></div>`;
+}
+
 function bindSettings() {
   document.getElementById('f-profile').onsubmit = e => {
     e.preventDefault();
@@ -1305,7 +1319,16 @@ function bindSettings() {
   const storeAI = () => {
     const f = formData(aiForm);
     if (aiForm.key) db.ai.keys[db.ai.provider] = f.key;
-    db.ai.models[db.ai.provider] = f.model || AI_PROVIDERS[db.ai.provider].models[0];
+    db.ai.models[db.ai.provider] = aiForm.model.value;
+  };
+  document.getElementById('ai-refresh').onclick = async ev => {
+    storeAI(); if (!save()) return;
+    if (!aiReady()) return toast('Paste your API key first', 'error');
+    const btn = ev.currentTarget;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try { const list = await fetchModelList(); render(); toast(`${list.length} models found`); } catch (err) {
+      toast(`Couldn't load models: ${err.message}`, 'error'); btn.disabled = false; btn.textContent = 'Refresh list';
+    }
   };
   aiForm.provider.addEventListener('change', () => { storeAI(); db.ai.provider = aiForm.provider.value; if (!save()) return; render(); });
   aiForm.onsubmit = e => { e.preventDefault(); storeAI(); if (!save()) return; toast('AI settings saved'); };
@@ -1316,7 +1339,8 @@ function bindSettings() {
     btn.disabled = true; btn.textContent = 'Testing…';
     try {
       const out = await callAI('You are a connection test.', 'Reply with exactly: OK', { maxTokens: 1024, temperature: 0 });
-      toast(`Connected to ${AI_PROVIDERS[db.ai.provider].name}: "${out.trim().slice(0, 40)}"`);
+      toast(`Connected to ${AI_PROVIDERS[db.ai.provider].name} (${aiLastModel}): "${out.trim().slice(0, 40)}"`);
+      render();
     } catch (err) {
       toast(`Connection failed: ${err.message}`, 'error');
     } finally { btn.disabled = false; btn.textContent = 'Test connection'; }

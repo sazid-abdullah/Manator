@@ -5,35 +5,134 @@ const AI_PROVIDERS = {
     needsKey: true,
     keyUrl: 'https://aistudio.google.com/apikey',
     note: 'Free tier with a Google account. Best all-round choice, handles Bangla well.',
-    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'],
+    fallback: 'gemini-flash-latest',
   },
   groq: {
     name: 'Groq',
     needsKey: true,
     keyUrl: 'https://console.groq.com/keys',
     note: 'Free tier, very fast open models.',
-    models: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
+    fallback: 'llama-3.3-70b-versatile',
   },
   openrouter: {
     name: 'OpenRouter',
     needsKey: true,
     keyUrl: 'https://openrouter.ai/keys',
     note: 'Many free models (names ending in ":free"). Free model list changes often.',
-    models: ['deepseek/deepseek-chat-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free'],
+    fallback: 'openrouter/free',
   },
   ollama: {
     name: 'Ollama (local, offline)',
     needsKey: false,
     keyUrl: 'https://ollama.com/download',
     note: 'Runs on your own computer, no key or internet needed. Start Ollama with OLLAMA_ORIGINS={origin} so this app (and only this app) can reach it. Avoid OLLAMA_ORIGINS=*, which lets any website use it.',
-    models: ['llama3.2', 'qwen2.5', 'gemma3'],
+    fallback: '',
   },
 };
 if (!(db.ai.provider in AI_PROVIDERS)) db.ai.provider = 'gemini';
 
+// Old versions saved their built-in default model name even when the user never picked one.
+// Those names get retired, so treat them as "Auto".
+const OLD_DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b',
+  'llama-3.1-8b-instant', 'deepseek/deepseek-chat-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free', 'llama3.2', 'qwen2.5', 'gemma3'];
+for (const [p, m] of Object.entries(db.ai.models)) if (OLD_DEFAULT_MODELS.includes(m)) db.ai.models[p] = '';
+
+// ── Model discovery ──────────────────────────────────────────
+// Free models are renamed and retired often, so the list comes from the provider (with the
+// user's key) and is cached per browser. "Auto" (empty choice) uses the best-ranked model and
+// moves to the next one when a model is retired (404) or out of free quota (429).
+const MODEL_CACHE_KEY = 'manator_models';
+const MODEL_CACHE_MS = 24 * 3600e3;
+let aiLastModel = '';
+
+function readModelCache() {
+  try { const c = JSON.parse(localStorage.getItem(MODEL_CACHE_KEY)); return c && typeof c === 'object' ? c : {}; } catch (e) { return {}; }
+}
+function writeModelCache(c) { try { localStorage.setItem(MODEL_CACHE_KEY, JSON.stringify(c)); } catch (e) { /* cache only */ } }
+function cachedModels(provider) {
+  const c = readModelCache()[provider];
+  return c && Array.isArray(c.list) ? c : null;
+}
+
+function modelScore(provider, id) {
+  const s = id.toLowerCase();
+  const unstable = /preview|exp|beta/.test(s) ? 0 : 1;
+  const ver = Number((s.match(/(\d+(?:\.\d+)?)/) || [])[1]) || 0;
+  const size = Math.max(0, ...[...s.matchAll(/(\d+(?:\.\d+)?)b\b/g)].map(m => Number(m[1])), /kimi-k2|deepseek/.test(s) ? 600 : 0);
+  const small = /lite|nano|mini|small|tiny|lightning|-xs|instant|\bflash-8b/.test(s) ? 0 : 1;
+  if (provider === 'gemini') {
+    const tier = /lite|nano|8b/.test(s) ? 1 : /pro/.test(s) ? 3 : /flash/.test(s) ? 2 : 0;
+    return [tier, unstable, ver];
+  }
+  return [s === 'openrouter/free' ? 0 : 1, small, unstable, size];
+}
+function rankModels(provider, ids) {
+  const cmp = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+  return [...new Set(ids)].sort((x, y) => cmp(modelScore(provider, x), modelScore(provider, y)) || x.localeCompare(y));
+}
+
+async function fetchModelList(provider) {
+  provider = provider || db.ai.provider;
+  const key = (db.ai.keys[provider] || '').trim();
+  let ids;
+  if (provider === 'gemini') {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key } });
+    if (!res.ok) throw await readError(res);
+    const d = await res.json();
+    ids = (d.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => String(m.name || '').replace(/^models\//, ''))
+      .filter(id => /^gemini-/.test(id) && !/embed|tts|image|live|audio|native|vision|computer-use|robotics|learnlm/.test(id));
+  } else {
+    const urls = { groq: 'https://api.groq.com/openai/v1/models', openrouter: 'https://openrouter.ai/api/v1/models', ollama: 'http://localhost:11434/v1/models' };
+    const res = await fetch(urls[provider], { headers: key ? { Authorization: `Bearer ${key}` } : {} });
+    if (!res.ok) throw await readError(res);
+    let data = (await res.json()).data || [];
+    if (provider === 'openrouter') {
+      data = data.filter(m => {
+        const pr = m.pricing || {};
+        const out = (m.architecture && m.architecture.output_modalities) || ['text'];
+        return (String(m.id).endsWith(':free') || (Number(pr.prompt) === 0 && Number(pr.completion) === 0)) && out.length === 1 && out[0] === 'text';
+      });
+    }
+    if (provider === 'groq') data = data.filter(m => m.active !== false);
+    ids = data.map(m => String(m.id)).filter(id => !/whisper|tts|guard|safety|embed|playai|orpheus|distil|coder|-code\b|code:/.test(id));
+  }
+  const list = rankModels(provider, ids);
+  if (!list.length) throw new Error('No usable text models were found for this provider.');
+  const cache = readModelCache();
+  const now = Date.now();
+  const blocked = Object.fromEntries(Object.entries((cache[provider] && cache[provider].blocked) || {}).filter(([, until]) => until > now));
+  cache[provider] = { list, at: now, blocked };
+  writeModelCache(cache);
+  return list;
+}
+
+function blockModel(provider, model, ms) {
+  const cache = readModelCache();
+  if (!cache[provider]) cache[provider] = { list: [], at: 0, blocked: {} };
+  cache[provider].blocked = { ...(cache[provider].blocked || {}), [model]: Date.now() + ms };
+  writeModelCache(cache);
+}
+
+function chosenModel(provider) { return String((db.ai.models && db.ai.models[provider]) || '').trim(); }
+
+function autoModels(provider) {
+  const c = cachedModels(provider);
+  const list = c ? c.list : [];
+  const blocked = (c && c.blocked) || {};
+  const now = Date.now();
+  const ok = list.filter(id => !(blocked[id] > now));
+  const fb = AI_PROVIDERS[provider].fallback;
+  return ok.length ? ok : fb && !(blocked[fb] > now) ? [fb] : [];
+}
+
 function aiModel(provider) {
   provider = provider || db.ai.provider;
-  return (db.ai.models && db.ai.models[provider]) || AI_PROVIDERS[provider].models[0];
+  return chosenModel(provider) || autoModels(provider)[0] || '';
+}
+
+function isModelGone(err) {
+  return err.status === 404 || (err.status === 400 && /model/i.test(err.message) && /not found|decommission|no longer|deprecat|not supported|does not exist|invalid model/i.test(err.message));
 }
 
 function aiReady() {
@@ -47,13 +146,41 @@ async function readError(res) {
   try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error)) || text; } catch (e) { /* plain text */ }
   if (res.status === 401 || res.status === 403) msg = 'The API key was rejected. Check it in Settings. ' + msg;
   if (res.status === 429) msg = 'Free-tier limit reached. Wait a minute or switch model/provider in Settings. ' + msg;
-  return new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
+  const err = new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
+  err.status = res.status;
+  return err;
 }
 
 async function callAI(system, user, opts) {
-  opts = opts || {};
   const provider = db.ai.provider;
-  const model = aiModel(provider);
+  const c = cachedModels(provider);
+  if (!c || Date.now() - c.at > MODEL_CACHE_MS) await fetchModelList(provider).catch(() => {});
+  let refreshed = false;
+  const tried = [];
+  for (;;) {
+    const model = aiModel(provider);
+    if (!model) throw new Error('No AI model is available. Open Settings → AI and press "Refresh list".');
+    try {
+      const text = await callModel(provider, model, system, user, opts);
+      aiLastModel = model;
+      return text;
+    } catch (err) {
+      const gone = isModelGone(err);
+      const explicit = chosenModel(provider) === model;
+      if (!(gone || err.status === 429) || (explicit && !gone) || tried.length >= 4) throw err;
+      tried.push(model);
+      blockModel(provider, model, gone ? 30 * 86400e3 : 3600e3);
+      if (gone && !refreshed) { refreshed = true; await fetchModelList(provider).catch(() => {}); blockModel(provider, model, 30 * 86400e3); }
+      if (explicit) { db.ai.models[provider] = ''; save(); }
+      const next = aiModel(provider);
+      if (!next || tried.includes(next)) throw err;
+      if (typeof toast === 'function') toast(`${model} ${gone ? 'is no longer available' : 'hit its free limit'}, using ${next} instead.`);
+    }
+  }
+}
+
+async function callModel(provider, model, system, user, opts) {
+  opts = opts || {};
   const key = (db.ai.keys[provider] || '').trim();
   const temperature = opts.temperature == null ? 0.6 : opts.temperature;
   const maxTokens = opts.maxTokens || 8192;
