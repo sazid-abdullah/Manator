@@ -412,7 +412,7 @@ function cleanDoc(text) {
 const EXAM_JSON_SYSTEM = `You convert exam papers into JSON for an on-screen exam app. Output only valid JSON: no Markdown fences, no comments, no text before or after.`;
 
 function examJsonPrompt(content) {
-  return `Convert this exam paper into JSON with exactly this shape:
+  return `Convert ${content == null ? 'the attached exam paper (PDF or photo)' : 'this exam paper'} into JSON with exactly this shape:
 {"title": "short title", "duration": minutes printed on the paper (0 if none), "instructions": "general instructions printed on the paper, or empty", "cqChoose": how many creative questions the student must answer (0 if all),
  "questions": [
   {"type": "mcq", "n": "1", "stimulus": "", "text": "the question", "options": ["…", "…", "…", "…"], "answer": 0, "marks": 1},
@@ -425,13 +425,13 @@ Rules:
 - MCQ options: the option text only, without labels like (ক), (a) or A. For multiple-completion MCQs, put the i/ii/iii statements in "text" (with line breaks) and the combinations as the options.
 - MCQs that share a stimulus or passage: copy it into "stimulus" of each of those questions.
 - Short-answer, broad, fill-in-the-blank, true/false, matching and numerical questions are "written".
-- Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself.
+- Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself and add "guessed": true to that question.
 - Marks as printed. If not printed: MCQ 1, others your best estimate.
-- Keep Markdown (tables, bold, line breaks as \\n) inside strings.
+- Keep Markdown (tables, bold, line breaks as \\n) inside strings.${content == null ? '' : `
 
 <<<PAPER
 ${content}
-PAPER>>>`;
+PAPER>>>`}`;
 }
 
 const MARK_SYSTEM = `You are a fair, experienced board examiner marking a student's written answers. Mark the way a board examiner would: give credit for correct ideas even when the wording is different from the model answer, give partial marks for partly correct work, and follow level-wise marking for creative questions. Output only valid JSON.`;

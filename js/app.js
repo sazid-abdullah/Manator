@@ -55,9 +55,9 @@ function closeModal() {
 modalRoot.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalRoot.hidden) closeModal(); });
 
-function confirmDialog(title, message, okLabel, onOk) {
+function confirmDialog(title, message, okLabel, onOk, cancelLabel) {
   openModal(title, `<p>${esc(message)}</p>
-    <div class="form-actions"><button class="btn" data-close>Cancel</button><button class="btn danger" id="confirm-ok">${esc(okLabel || 'Delete')}</button></div>`,
+    <div class="form-actions"><button class="btn" data-close>${esc(cancelLabel || 'Cancel')}</button><button class="btn danger" id="confirm-ok">${esc(okLabel || 'Delete')}</button></div>`,
   body => { body.querySelector('#confirm-ok').onclick = () => { closeModal(); onOk(); }; });
 }
 
@@ -356,9 +356,9 @@ function viewStudent(s) {
       ${contractCards ? `<div class="grid-2">${contractCards}</div>` : `<div class="card empty">No contract yet. Add one to track fees (e.g. ${money(3000)} every 12 classes, or monthly).</div>`}</div>
     <div class="section"><h2>Classes <a class="small" href="#/classes?student=${s.id}">Open in class log</a></h2>
       ${lessons.length ? lessons.slice(0, 15).map(l => lessonCard(l, { hideStudent: true })).join('') + (lessons.length > 15 ? `<a class="btn sm" href="#/classes?student=${s.id}">Show all ${lessons.length}</a>` : '') : '<div class="card empty">No classes logged yet.</div>'}</div>
-    <div class="section"><h2>Exams</h2><div class="card"><div class="list">${(() => {
+    <div class="section"><h2>Exams <button class="btn sm" data-action="upload-paper" data-student="${s.id}">Upload question paper</button></h2><div class="card"><div class="list">${(() => {
       const ats = db.attempts.filter(a => a.studentId === s.id).sort((a, b) => b.startedAt - a.startedAt);
-      return ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams yet. Open an exam paper (AI → Saved) and press Start exam.</div>';
+      return ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams yet. Upload a question paper, or open one in AI → Saved, and press Start exam.</div>';
     })()}</div></div></div>
     <div class="section"><h2>Payments</h2><div class="card"><div class="list">${payments.length ? payments.map(paymentRow).join('') : '<div class="empty">No payments yet.</div>'}</div></div></div>
     <div class="section actions">
@@ -1019,8 +1019,8 @@ function viewAI() {
     <div class="seg" id="ai-tools" style="margin-bottom:16px">${Object.entries(AI_TOOLS).map(([k, v]) => `<button data-tool="${k}" class="${tool === k ? 'active' : ''}">${v}</button>`).join('')}</div>`;
   if (tool === 'results') {
     const ats = db.attempts.filter(a => !ui.docsStudent || a.studentId === ui.docsStudent).sort((a, b) => b.startedAt - a.startedAt);
-    return head + `<div class="toolbar"><select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select></div>
-      <div class="card"><div class="list">${ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams taken yet. Open an exam paper in Saved, or generate one, and press Start exam.</div>'}</div></div>`;
+    return head + `<div class="toolbar"><select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select><button class="btn primary" data-action="upload-paper">Upload question paper</button></div>
+      <div class="card"><div class="list">${ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams taken yet. Upload a question paper, or open one in Saved, and press Start exam.</div>'}</div></div>`;
   }
   if (tool === 'saved') {
     const docs = db.docs
@@ -1029,7 +1029,7 @@ function viewAI() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return head + `<div class="toolbar"><select data-filter="docsType" aria-label="Type"><option value="">All types</option>${['plan', 'exam', 'worksheet'].map(t => `<option value="${t}"${ui.docsType === t ? ' selected' : ''}>${AI_TOOLS[t]}</option>`).join('')}</select>
       <select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select>
-      <button class="btn" data-action="import-doc">Import Word / text file</button></div>
+      <button class="btn primary" data-action="upload-paper">Upload question paper</button><button class="btn" data-action="import-doc">Import Word / text file</button></div>
       <div class="card"><div class="list">${docs.length ? docs.map(docRow).join('') : '<div class="empty">Nothing saved yet. Generate something and press Save, or import questions you wrote in Word.</div>'}</div></div>`;
   }
   const r = ui.aiResult && ui.aiResult.tool === tool ? ui.aiResult : null;
@@ -1475,6 +1475,26 @@ function fmtClock(ms) {
   return h ? `${h}:${pad2(m)}:${pad2(s)}` : `${pad2(m)}:${pad2(s)}`;
 }
 function fmtN(n) { return String(Math.round(n * 10) / 10); }
+const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
+const bnNum = v => String(v).replace(/\d/g, d => BN_DIGITS[d]);
+const BM_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>';
+const GRID_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
+// Student-facing exam text follows the paper's language.
+function examText(ex) {
+  return optLabels(ex) === OPT_LETTERS_BN ? {
+    num: bnNum, time: m => `সময়ঃ ${bnNum(m)} মিনিট`, marks: m => `${bnNum(m)} নম্বর`, any: n => `যেকোনো ${bnNum(n)}টির উত্তর দাও`,
+    submit: 'সাবমিট', list: 'প্রশ্ন লিস্ট', mcq: 'বহুনির্বাচনি প্রশ্ন', cq: 'সৃজনশীল প্রশ্ন', written: 'লিখিত প্রশ্ন',
+    placeholder: 'এখানে উত্তর লেখো, অথবা খাতায় লেখো', bookmark: 'পরে দেখার জন্য চিহ্নিত করো',
+    answered: 'উত্তর দেওয়া', partly: 'আংশিক', notAnswered: 'উত্তর দেওয়া হয়নি', marked: 'চিহ্নিত',
+    confirmTitle: 'পরীক্ষা জমা দেবে?', confirmLeft: n => `${bnNum(n)}টি প্রশ্নের উত্তর এখনো দেওয়া হয়নি। `, confirmLock: 'জমা দেওয়ার পর আর উত্তর বদলানো যাবে না।', cancel: 'বাতিল',
+  } : {
+    num: String, time: m => `Time: ${m} min`, marks: m => `${m} marks`, any: n => `answer any ${n}`,
+    submit: 'Submit', list: 'Questions', mcq: 'Multiple choice', cq: 'Creative questions', written: 'Written questions',
+    placeholder: 'Write your answer here, or on paper', bookmark: 'Mark to come back to later',
+    answered: 'Answered', partly: 'Partly answered', notAnswered: 'Not answered', marked: 'Marked',
+    confirmTitle: 'Submit exam?', confirmLeft: n => `${n} question${n === 1 ? ' is' : 's are'} not answered yet. `, confirmLock: "You can't change answers after submitting.", cancel: 'Cancel',
+  };
+}
 function optLabels(ex) { return /[\u0980-\u09FF]/.test(JSON.stringify(ex.questions.slice(0, 8))) ? OPT_LETTERS_BN : OPT_LETTERS; }
 function cqTotal(q) { return q.parts.reduce((a, p) => a + p.marks, 0); }
 function qParts(q) { return q.type === 'cq' ? q.parts : [{ label: '', text: q.text, marks: q.marks, answer: q.answer }]; }
@@ -1492,7 +1512,7 @@ function examStats(ex) {
   const cq = ex.questions.filter(q => q.type === 'cq');
   const wr = ex.questions.filter(q => q.type === 'written');
   const cqMax = sumOf(cq.map(cqTotal).sort((a, b) => b - a).slice(0, cqLimit(ex, cq.length)));
-  return { mcq: mcq.length, cq: cq.length, written: wr.length, noKey: mcq.filter(q => q.answer == null).length,
+  return { mcq: mcq.length, cq: cq.length, written: wr.length, noKey: mcq.filter(q => q.answer == null).length, guessed: mcq.filter(q => q.guessed).length,
     max: sumOf(mcq.map(q => q.marks)) + cqMax + sumOf(wr.map(q => q.marks)) };
 }
 function examSummary(ex) {
@@ -1573,13 +1593,13 @@ function openExamSetup(doc, opts) {
   const st = examStats(ex);
   openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
     ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
+    ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
     <div class="help">Hand the device to the student. The timer starts when you press Start exam, and the exam submits itself when time runs out.</div>
     <div class="form-actions"><button type="button" class="btn ghost" id="ex-reread">Read paper again</button><button type="button" class="btn" id="ex-preview">Preview with answers</button><button class="btn primary">Start exam</button></div></form>`, body => {
     body.querySelector('#ex-reread').onclick = () => { ex.hash = ''; if (!save()) return; openExamSetup(doc, opts); };
-    body.querySelector('#ex-preview').onclick = () => openModal(ex.title, `<div class="actions" style="margin-bottom:12px"><button class="btn sm" id="ex-back">← Back</button></div>${examPreviewHTML(ex)}`,
-      b2 => { b2.querySelector('#ex-back').onclick = () => openExamSetup(doc, opts); });
+    body.querySelector('#ex-preview').onclick = () => openExamPreview(ex, doc, opts);
     body.querySelector('form').onsubmit = e => {
       e.preventDefault();
       const f = formData(e.target);
@@ -1594,10 +1614,136 @@ function openExamSetup(doc, opts) {
   });
 }
 
-function examPreviewHTML(ex) {
+// ── Upload a question paper straight into an exam ────────────
+const PAPER_FILES = /\.(pdf|png|jpe?g|webp)$/;
+const IMAGE_MIME = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
+
+async function readPaperToExam(file) {
+  const low = file.name.toLowerCase();
+  let content = null, text = null, files = [];
+  if (PAPER_FILES.test(low)) {
+    if (file.size > SOURCE_FILE_MAX) throw new Error(`"${file.name}" is too big. PDFs and photos can be up to 14 MB.`);
+    const pdf = low.endsWith('.pdf'), bytes = await file.arrayBuffer();
+    if (db.ai.provider === 'gemini') files = [{ mimeType: pdf ? 'application/pdf' : file.type || IMAGE_MIME[low.split('.').pop()], data: toBase64(bytes) }];
+    else if (!pdf) throw new Error('Only Google Gemini can read photos. Switch to Gemini in Settings → AI, or upload a Word or text file.');
+    else {
+      const r = await pdfText(bytes);
+      if (r.text.replace(/\s/g, '').length < 40 * r.pages) throw new Error(`"${file.name}" looks like a scanned PDF with no text inside. Switch to Google Gemini in Settings → AI, which can read scanned pages.`);
+      text = r.text;
+    }
+  } else {
+    content = text = (await readImportFile(file)).content;
+    if (!content.trim()) throw new Error('No text found in this file.');
+  }
+  const exam = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
+  if (!exam.questions.length) throw new Error('No questions were found in this paper.');
+  return { exam, content };
+}
+
+// Library copy of a paper the AI read from a PDF or photo, with the answer key at the end.
+function examToMarkdown(ex) {
+  const T = examText(ex), L = optLabels(ex), bn = L === OPT_LETTERS_BN;
+  const out = [], key = [];
+  if (ex.instructions) out.push(ex.instructions);
+  out.push(`*${T.time(ex.duration)}*`);
+  for (const [type, title] of [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]]) {
+    const qs = ex.questions.filter(q => q.type === type);
+    if (!qs.length) continue;
+    const ks = [];
+    out.push(`## ${title}${type === 'cq' && cqLimit(ex, qs.length) < qs.length ? ` (${T.any(ex.cqChoose)})` : ''}`);
+    for (const q of qs) {
+      if (type === 'mcq') {
+        if (q.stimulus) out.push(q.stimulus);
+        out.push(`**${q.n}.** ${q.text}`, q.options.map((o, i) => `- ${L[i]}. ${o}`).join('\n'));
+        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer]}`}`);
+        continue;
+      }
+      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim());
+      qParts(q).forEach(p => {
+        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`);
+        if (p.answer) ks.push(`- ${q.n}${type === 'cq' && p.label ? ` (${p.label})` : ''}. ${p.answer.replace(/\n+/g, ' ')}`);
+      });
+    }
+    if (ks.length) key.push(`### ${title}`, ks.join('\n'));
+  }
+  if (key.length) out.push(`## ${bn ? 'উত্তরমালা' : 'Answer Key'}`, ...key);
+  return out.join('\n\n');
+}
+
+function uploadPaperForm(studentId) {
+  openModal('Upload question paper', `<form class="form" id="f-upload">
+      <label class="field">Question paper *<input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.doc,.txt,.md" required></label>
+      <p class="help" style="margin:0">A PDF, a photo of the paper, a Word file or a text file. The AI reads it once and turns it into an on-screen exam with tap-to-answer MCQs and answer boxes. ${db.ai.provider === 'gemini' ? 'Scanned PDFs and photos work too.' : 'Only Google Gemini can read photos and scanned PDFs (Settings → AI).'} The whole file is sent to the AI, so remove students' names first.</p>
+      <label class="field">Title<input name="title" placeholder="Taken from the paper if empty"></label>
+      <label class="field">Student (optional)<select name="studentId">${studentOptions(studentId || ui.docsStudent || '', true, 'No student')}</select></label>
+      <div class="notice err" id="up-err" hidden></div>
+      <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" id="up-go">Read paper</button></div></form>`,
+  body => {
+    const form = body.querySelector('#f-upload');
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const file = form.file.files[0];
+      if (!file) return;
+      if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+      const btn = form.querySelector('#up-go'), box = form.querySelector('#up-err');
+      btn.disabled = true; box.hidden = true;
+      btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
+      try {
+        const d = formData(form);
+        const { exam, content } = await readPaperToExam(file);
+        const title = d.title || (exam.title !== 'Exam' ? exam.title : file.name.replace(/\.[^.]+$/, ''));
+        const doc = { id: uid(), type: 'exam', title, content: content || examToMarkdown(exam), studentId: d.studentId || '', meta: { importedFrom: file.name }, createdAt: new Date().toISOString() };
+        const ex = { ...exam, title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: doc.createdAt };
+        db.docs.push(doc); db.exams.push(ex);
+        if (!save()) {
+          db.docs = db.docs.filter(x => x !== doc); db.exams = db.exams.filter(x => x !== ex);
+          throw new Error("Couldn't save the exam. Your browser storage may be full.");
+        }
+        const open = document.body.contains(btn);
+        render();
+        if (open) openExamSetup(doc, { studentId: doc.studentId });
+        else toast(`"${title}" is ready. Open it in AI → Saved to start the exam.`);
+      } catch (err) {
+        if (!document.body.contains(btn)) return toast(`Couldn't read the paper: ${err.message || err}`, 'error');
+        box.hidden = false; box.textContent = err.message || String(err);
+        btn.disabled = false; btn.textContent = 'Try again';
+      }
+    };
+  });
+}
+
+function openExamPreview(ex, doc, opts) {
+  const L = optLabels(ex);
+  openModal(ex.title, `<div class="actions" style="margin-bottom:12px"><button class="btn sm" id="ex-back">← Back</button></div>
+    ${ex.questions.some(q => q.type === 'mcq') ? '<p class="help" style="margin:0 0 10px">Tap an option to make it the correct answer.</p>' : ''}${examPreviewHTML(ex, true)}`,
+  b2 => {
+    b2.querySelector('#ex-back').onclick = () => openExamSetup(doc, opts);
+    b2.addEventListener('click', e => {
+      const b = e.target.closest('[data-pkey]');
+      if (!b) return;
+      const [qid, i] = b.dataset.pkey.split(':');
+      const q = ex.questions.find(x => x.id === qid);
+      if (!q) return;
+      const prev = [q.answer, q.guessed];
+      q.answer = Number(i); q.guessed = false;
+      if (!save()) { [q.answer, q.guessed] = prev; return; }
+      b.closest('[data-pq]').innerHTML = prevMcqHTML(q, L, true);
+    });
+  });
+}
+
+function prevMcqHTML(q, L, editable) {
+  const item = (o, i) => {
+    const on = i === q.answer, t = `${L[i]}. ${esc(o)}${on ? ' ✓' : ''}`;
+    return `<li class="${on ? 'pos' : ''}">${editable ? `<button type="button" class="exam-prev-opt" data-pkey="${q.id}:${i}" aria-pressed="${on}">${t}</button>` : t}</li>`;
+  };
+  return `${q.guessed ? '<span class="badge yellow">AI answer – check</span>' : ''}<ol class="exam-prev-opts">${q.options.map(item).join('')}</ol>`;
+}
+
+function examPreviewHTML(ex, editable) {
   const L = optLabels(ex);
   return ex.questions.map(q => `<div class="exam-q">${q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : ''}
-    ${q.type === 'mcq' ? `<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div><ol class="exam-prev-opts">${q.options.map((o, i) => `<li class="${i === q.answer ? 'pos' : ''}">${L[i]}. ${esc(o)}${i === q.answer ? ' ✓' : ''}</li>`).join('')}</ol>`
+    ${q.type === 'mcq' ? `<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div><div data-pq="${q.id}">${prevMcqHTML(q, L, editable)}</div>`
       : `${q.type === 'cq' ? `<div><b>${esc(q.n)}.</b></div>` : ''}${qParts(q).map(p => `<div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
         ${p.answer ? `<div class="exam-ans muted">${esc(p.answer)}</div>` : ''}`).join('')}`}</div>`).join('');
 }
@@ -1630,26 +1776,59 @@ function viewExam(id) {
       <div class="actions" style="justify-content:center;margin-top:14px"><a class="btn primary" href="#/result/${at.id}">See result and mark</a></div></div>`;
   }
   document.body.classList.add('exam-mode');
-  const L = optLabels(ex);
+  const L = optLabels(ex), T = examText(ex);
   const pr = examProgress(ex, at);
+  const flags = new Set(at.flags || []);
+  const bm = q => `<button type="button" class="exam-bm${flags.has(q.id) ? ' on' : ''}" data-bm="${q.id}" aria-pressed="${flags.has(q.id)}" aria-label="${esc(T.bookmark)}" title="${esc(T.bookmark)}">${BM_ICON}</button>`;
   const stim = q => (q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : '');
-  const mcq = ex.questions.filter(q => q.type === 'mcq').map(q => `<div class="card exam-q">${stim(q)}<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>
+  const mcq = ex.questions.filter(q => q.type === 'mcq').map(q => `<div class="card exam-q" id="eq-${q.id}">${stim(q)}<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>
+    <div class="exam-qtools">${bm(q)}</div>
     <div class="exam-opts" role="radiogroup">${q.options.map((o, i) => `<label class="exam-opt"><input type="radio" name="${q.id}" value="${i}"${at.answers[q.id] === i ? ' checked' : ''}><span class="exam-ol">${L[i]}</span><span class="doc">${renderMarkdown(o)}</span></label>`).join('')}</div></div>`).join('');
-  const writtenQ = q => `<div class="card exam-q">${q.type === 'cq' ? `<div class="exam-qn"><b>${esc(q.n)}.</b> <span class="muted small">${fmtN(cqTotal(q))} marks</span></div>` : ''}${stim(q)}
-    ${qParts(q).map((p, i) => `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
-      <textarea rows="${p.marks > 2 ? 6 : 3}" data-q="${q.id}" data-part="${i}" aria-label="Answer ${esc(q.n)}${esc(p.label)}" placeholder="Write your answer here, or on paper">${esc(partAnswer(at, q, i))}</textarea></div>`).join('')}</div>`;
+  const writtenQ = q => `<div class="card exam-q" id="eq-${q.id}"><div class="exam-qn"><span>${q.type === 'cq' ? `<b>${esc(q.n)}.</b> <span class="muted small">${esc(T.marks(fmtN(cqTotal(q))))}</span>` : ''}</span>${bm(q)}</div>${stim(q)}
+    ${qParts(q).map((p, i) => `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${T.num(fmtN(p.marks))}]*`)}</div>
+      <textarea rows="${p.marks > 2 ? 6 : 3}" data-q="${q.id}" data-part="${i}" aria-label="Answer ${esc(q.n)}${esc(p.label)}" placeholder="${esc(T.placeholder)}">${esc(partAnswer(at, q, i))}</textarea></div>`).join('')}</div>`;
   const cqs = ex.questions.filter(q => q.type === 'cq');
   const wr = ex.questions.filter(q => q.type === 'written');
-  return `<div class="exam-bar"><div class="exam-title"><b>${esc(at.title)}</b><div class="muted small" id="exam-progress">${pr.done} of ${pr.total} answered</div></div>
-      <div class="exam-timer" id="exam-timer" role="timer" aria-label="Time left">${fmtClock(at.endsAt - Date.now())}</div>
-      <button class="btn primary sm" data-action="exam-submit" data-id="${at.id}">Submit</button></div>
+  const heads = [mcq, cqs.length, wr.length].filter(Boolean).length > 1;
+  const head = (title, extra) => (heads || extra ? `<h2 class="exam-sec">${heads ? esc(title) : ''}${extra ? ` <span class="muted small">${esc(extra)}</span>` : ''}</h2>` : '');
+  return `<div class="exam-head"><h1>${esc(at.title)}</h1><div class="exam-time">${esc(T.time(Math.round((at.endsAt - at.startedAt) / 60e3)))}</div></div>
     ${ex.instructions ? `<div class="notice">${esc(ex.instructions)}</div>` : ''}
-    <form id="exam-form" autocomplete="off">
-      ${mcq ? `<div class="section"><h2>Multiple choice <span class="muted small">tap one answer</span></h2>${mcq}</div>` : ''}
-      ${cqs.length ? `<div class="section"><h2>Creative questions${cqLimit(ex, cqs.length) < cqs.length ? ` <span class="muted small">answer any ${ex.cqChoose}</span>` : ''}</h2>${cqs.map(writtenQ).join('')}</div>` : ''}
-      ${wr.length ? `<div class="section"><h2>Written questions</h2>${wr.map(writtenQ).join('')}</div>` : ''}
+    <form id="exam-form" class="exam-body" autocomplete="off">
+      ${mcq ? `<div class="section">${head(T.mcq)}${mcq}</div>` : ''}
+      ${cqs.length ? `<div class="section">${head(T.cq, cqLimit(ex, cqs.length) < cqs.length ? T.any(ex.cqChoose) : '')}${cqs.map(writtenQ).join('')}</div>` : ''}
+      ${wr.length ? `<div class="section">${head(T.written)}${wr.map(writtenQ).join('')}</div>` : ''}
     </form>
-    <div class="form-actions"><button class="btn primary" data-action="exam-submit" data-id="${at.id}">Submit exam</button></div>`;
+    <button type="button" class="exam-listbtn" id="exam-list">${GRID_ICON}<span>${esc(T.list)}</span></button>
+    <div class="exam-foot"><div class="exam-foot-in">
+      <span class="exam-timer" id="exam-timer" role="timer" aria-label="Time left">${examText(ex).num(fmtClock(at.endsAt - Date.now()))}</span>
+      <button type="button" class="exam-submit" data-action="exam-submit" data-id="${at.id}">${esc(T.submit)}</button>
+      <span class="exam-count" id="exam-progress" aria-label="${esc(T.answered)}">${T.num(pr.done)} / ${T.num(pr.total)}</span>
+    </div></div>`;
+}
+
+function qState(at, q) {
+  if (q.type === 'mcq') return at.answers[q.id] != null ? 'done' : '';
+  const parts = qParts(q), filled = parts.filter((p, i) => partAnswer(at, q, i).trim()).length;
+  return !filled ? '' : filled === parts.length ? 'done' : 'part';
+}
+
+function openQuestionList(ex, at) {
+  const T = examText(ex), flags = new Set(at.flags || []);
+  const btn = q => {
+    const st = qState(at, q);
+    return `<button type="button" class="exam-qnum ${st}" data-jump="eq-${q.id}" aria-label="${esc(`${q.n}: ${st === 'done' ? T.answered : st === 'part' ? T.partly : T.notAnswered}${flags.has(q.id) ? ', ' + T.marked : ''}`)}">${esc(T.num(q.n))}${flags.has(q.id) ? '<i class="flag"></i>' : ''}</button>`;
+  };
+  const groups = [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]].map(([type, title]) => [title, ex.questions.filter(q => q.type === type)]).filter(g => g[1].length);
+  const grids = groups.map(([title, qs]) => `${groups.length > 1 ? `<h3 class="exam-qgroup">${esc(title)}</h3>` : ''}<div class="exam-qgrid">${qs.map(btn).join('')}</div>`).join('');
+  openModal(T.list, `${grids}
+    <div class="exam-legend"><span><i class="sw done"></i>${esc(T.answered)}</span><span><i class="sw part"></i>${esc(T.partly)}</span><span><i class="sw"></i>${esc(T.notAnswered)}</span><span><i class="sw flagged"></i>${esc(T.marked)}</span></div>`,
+  body => body.addEventListener('click', e => {
+    const b = e.target.closest('[data-jump]');
+    if (!b) return;
+    closeModal();
+    const el = document.getElementById(b.dataset.jump);
+    if (el) { el.scrollIntoView({ block: 'start' }); const f = el.querySelector('input, textarea'); if (f) f.focus({ preventScroll: true }); }
+  }));
 }
 
 function bindExam() {
@@ -1659,9 +1838,20 @@ function bindExam() {
   const ex = at && getExam(at.examId);
   if (!at || !ex || at.status !== 'running') return;
   const live = () => { const a = getAttempt(id); return a && a.status === 'running' ? a : null; };
-  const progress = a => { const p = examProgress(ex, a); const el = document.getElementById('exam-progress'); if (el) el.textContent = `${p.done} of ${p.total} answered`; };
+  const T = examText(ex);
+  const progress = a => { const p = examProgress(ex, a); const el = document.getElementById('exam-progress'); if (el) el.textContent = `${T.num(p.done)} / ${T.num(p.total)}`; };
   const form = document.getElementById('exam-form');
   form.onsubmit = e => e.preventDefault();
+  form.addEventListener('click', e => {
+    const b = e.target.closest('[data-bm]'), a = live();
+    if (!b || !a) return;
+    const cur = a.flags || [], on = !cur.includes(b.dataset.bm);
+    a.flags = on ? [...cur, b.dataset.bm] : cur.filter(f => f !== b.dataset.bm);
+    save();
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  document.getElementById('exam-list').onclick = () => { const a = live(); if (a) openQuestionList(ex, a); };
   form.addEventListener('change', e => {
     const t = e.target, a = live();
     if (!a) return;
@@ -1687,7 +1877,7 @@ function bindExam() {
     if (left <= 0) { clearInterval(examTimer); submitAttempt(id, true); return; }
     const el = document.getElementById('exam-timer');
     if (el) {
-      el.textContent = fmtClock(left);
+      el.textContent = T.num(fmtClock(left));
       el.classList.toggle('warn', left <= 300e3 && left > 60e3);
       el.classList.toggle('danger', left <= 60e3);
     }
@@ -2085,6 +2275,7 @@ const ACTIONS = {
   'install': async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); },
   'open-doc': d => openDoc(db.docs.find(x => x.id === d.id)),
   'import-doc': () => importDocForm(),
+  'upload-paper': d => uploadPaperForm(d.student),
   'ai-save': () => {
     const r = ui.aiResult; if (!r || r.savedId) return;
     const doc = { id: uid(), type: r.tool, title: r.title, content: r.content, studentId: r.studentId, meta: r.meta, createdAt: new Date().toISOString() };
@@ -2107,9 +2298,9 @@ const ACTIONS = {
   'exam-submit': d => {
     const at = getAttempt(d.id), ex = at && getExam(at.examId);
     if (!at || at.status !== 'running') return;
-    const p = examProgress(ex, at);
+    const p = examProgress(ex, at), T = examText(ex);
     const left = p.total - p.done;
-    confirmDialog('Submit exam?', `${left ? `${left} question${left === 1 ? ' is' : 's are'} not answered yet. ` : ''}You can't change answers after submitting.`, 'Submit', () => submitAttempt(d.id));
+    confirmDialog(T.confirmTitle, `${left ? T.confirmLeft(left) : ''}${T.confirmLock}`, T.submit, () => submitAttempt(d.id), T.cancel);
   },
   'exam-ai-mark': d => aiMarkAttempt(d.id),
   'exam-delete': d => confirmDialog('Delete this result?', 'The student\'s answers and marks for this exam will be deleted.', 'Delete', () => {
