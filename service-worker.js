@@ -1,8 +1,9 @@
 // Network-first so updates show up immediately; falls back to cache when offline.
-const CACHE = 'manator-v7';
+const CACHE = 'manator-v8';
 const ASSETS = [
   './', './index.html', './manifest.json', './icons/icon.svg', './css/style.css',
   './js/store.js', './js/contracts.js', './js/ai.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
+  './js/vendor/pdfjs/pdf.min.mjs', './js/vendor/pdfjs/pdf.worker.min.mjs',
 ];
 
 self.addEventListener('install', e => {
@@ -26,6 +27,6 @@ self.addEventListener('fetch', e => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('./index.html')))
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error())))
   );
 });

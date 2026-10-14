@@ -1602,12 +1602,18 @@ function examPreviewHTML(ex) {
         ${p.answer ? `<div class="exam-ans muted">${esc(p.answer)}</div>` : ''}`).join('')}`}</div>`).join('');
 }
 
+// With "answer any N", only the N most-answered creative questions are required.
 function examProgress(ex, at) {
   let done = 0, total = 0;
+  const cqs = [];
   for (const q of ex.questions) {
     if (q.type === 'mcq') { total++; if (at.answers[q.id] != null) done++; continue; }
-    qParts(q).forEach((p, i) => { total++; if (partAnswer(at, q, i).trim()) done++; });
+    const filled = qParts(q).filter((p, i) => partAnswer(at, q, i).trim()).length;
+    if (q.type === 'cq') { cqs.push({ filled, parts: q.parts.length }); continue; }
+    total++;
+    done += filled;
   }
+  cqs.sort((a, b) => b.filled - a.filled).slice(0, cqLimit(ex, cqs.length)).forEach(c => { total += c.parts; done += c.filled; });
   return { done, total };
 }
 
@@ -1723,6 +1729,11 @@ function viewResult(id) {
   const mcqRows = mcqs.map(q => {
     const a = at.answers[q.id];
     const ok = q.answer != null && a === q.answer;
+    if (q.answer == null) {
+      return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>
+        <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div></div>
+        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${o}`.slice(0, 60))}</option>`).join('')}</select></div>`;
+    }
     const badge = q.answer == null ? '<span class="badge yellow">No key</span>' : a == null ? '<span class="badge">—</span>' : ok ? '<span class="badge green">✓</span>' : '<span class="badge red">✗</span>';
     return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>
       <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)}${!ok && q.answer != null ? ` · Correct: ${opt(q, q.answer)}` : ''}</div></div>${badge}</div>`;
@@ -1773,10 +1784,30 @@ function readMarkForm(form, at, ex) {
   }
 }
 
+function markInputs() {
+  return Object.fromEntries([...document.querySelectorAll('#mark-form input[name^="m:"]')].map(i => [i.name, i.value]));
+}
+function restoreMarkInputs(kept) {
+  document.querySelectorAll('#mark-form input[name^="m:"]').forEach(i => { if (i.name in kept) i.value = kept[i.name]; });
+}
+
 function bindResult() {
+  const id = parseHash().parts[1];
+  document.querySelectorAll('#view select[data-setkey]').forEach(sel => {
+    sel.onchange = () => {
+      const at = getAttempt(id), ex = at && getExam(at.examId);
+      const q = ex && ex.questions.find(x => x.id === sel.dataset.setkey);
+      if (!q || sel.value === '') return;
+      const kept = markInputs();
+      q.answer = Number(sel.value);
+      if (!save()) { q.answer = null; return; }
+      render();
+      restoreMarkInputs(kept);
+      toast('Answer key set. This MCQ is now marked automatically.');
+    };
+  });
   const form = document.getElementById('mark-form');
   if (!form) return;
-  const id = parseHash().parts[1];
   const use = form.querySelector('#use-sug');
   if (use) use.onclick = () => form.querySelectorAll('input[data-sug]').forEach(i => { if (i.dataset.sug !== '') i.value = i.dataset.sug; });
   form.onsubmit = e => {
@@ -1794,8 +1825,7 @@ function bindResult() {
 async function aiMarkAttempt(id) {
   const at = getAttempt(id), ex = at && getExam(at.examId);
   if (!at || !ex || ui.examBusy) return;
-  const form = document.getElementById('mark-form');
-  if (form) readMarkForm(form, at, ex);
+  const kept = markInputs();
   const items = ex.questions.filter(q => q.type !== 'mcq').map(q => ({
     id: q.id, stimulus: q.stimulus || undefined,
     parts: qParts(q).map((p, i) => ({ part: i, question: `${p.label ? p.label + '. ' : ''}${p.text}`, max: p.marks, model_answer: p.answer || undefined, student_answer: partAnswer(at, q, i).trim() }))
@@ -1803,9 +1833,9 @@ async function aiMarkAttempt(id) {
   })).filter(x => x.parts.length);
   if (!items.length) return toast('No typed answers to mark. Enter the marks for answers written on paper yourself.');
   if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); return; }
-  save();
   ui.examBusy = 'Marking…';
   render();
+  restoreMarkInputs(kept);
   try {
     const data = parseJSONReply(await callAI(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
     const out = {};
@@ -1824,7 +1854,7 @@ async function aiMarkAttempt(id) {
   } finally {
     ui.examBusy = false;
   }
-  if (parseHash().parts[0] === 'result') render();
+  if (parseHash().parts[0] === 'result') { render(); restoreMarkInputs(kept); }
 }
 
 // ── Settings ─────────────────────────────────────────────────
