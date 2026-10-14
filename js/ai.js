@@ -140,12 +140,17 @@ function aiReady() {
   return !!p && (!p.needsKey || !!(db.ai.keys[db.ai.provider] || '').trim());
 }
 
+function tooLongError() {
+  return new Error('The AI ran out of room before finishing its answer. For a long paper, use Google Gemini, or upload it in parts (for example MCQ and CQ separately).');
+}
+
 async function readError(res) {
   const text = await res.text().catch(() => '');
   let msg = text;
   try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error)) || text; } catch (e) { /* plain text */ }
   if (res.status === 401 || res.status === 403) msg = 'The API key was rejected. Check it in Settings. ' + msg;
-  if (res.status === 429) msg = 'Free-tier limit reached. Wait a minute or switch model/provider in Settings. ' + msg;
+  if (res.status === 413 || /request too large|tokens per minute|context length|maximum context/i.test(msg)) msg = 'This is too long for this model\'s free limit. Use Google Gemini, or send a shorter paper. ' + msg;
+  else if (res.status === 429) msg = 'Free-tier limit reached. Wait a minute or switch model/provider in Settings. ' + msg;
   const err = new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
   err.status = res.status;
   return err;
@@ -167,14 +172,19 @@ async function callAI(system, user, opts) {
     } catch (err) {
       const gone = isModelGone(err);
       const explicit = chosenModel(provider) === model;
-      if (!(gone || err.status === 429) || (explicit && !gone) || tried.length >= 4) throw err;
+      // A 429 with "limit: 0" means the model isn't in this key's free tier at all.
+      const noFreeTier = err.status === 429 && /limit:\s*0\b/.test(err.message);
+      if (!(gone || err.status === 429) || (explicit && !gone) || tried.length >= 8) {
+        if (explicit && noFreeTier) err.message = `${model} isn't free on your key. Choose "Auto" in Settings → AI. ` + err.message;
+        throw err;
+      }
       tried.push(model);
-      blockModel(provider, model, gone ? 30 * 86400e3 : 3600e3);
+      blockModel(provider, model, gone ? 30 * 86400e3 : noFreeTier ? 7 * 86400e3 : 3600e3);
       if (gone && !refreshed) { refreshed = true; await fetchModelList(provider).catch(() => {}); blockModel(provider, model, 30 * 86400e3); }
       if (explicit) { db.ai.models[provider] = ''; save(); }
       const next = aiModel(provider);
       if (!next || tried.includes(next)) throw err;
-      if (typeof toast === 'function') toast(`${model} ${gone ? 'is no longer available' : 'hit its free limit'}, using ${next} instead.`);
+      if (typeof toast === 'function') toast(`${model} ${gone ? 'is no longer available' : noFreeTier ? 'is not free on your key' : 'hit its free limit'}, using ${next} instead.`);
     }
   }
 }
@@ -203,7 +213,9 @@ async function callModel(provider, model, system, user, opts) {
     });
     if (!res.ok) throw await readError(res);
     const data = await res.json();
-    const text = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts || [])
+    const cand = data.candidates && data.candidates[0];
+    if (cand && cand.finishReason === 'MAX_TOKENS') throw tooLongError();
+    const text = (cand && cand.content && cand.content.parts || [])
       .map(p => p.text || '').join('');
     if (!text) throw new Error('The AI returned an empty answer' + (data.promptFeedback ? ` (${JSON.stringify(data.promptFeedback)})` : '.'));
     return text;
@@ -224,7 +236,9 @@ async function callModel(provider, model, system, user, opts) {
   });
   if (!res.ok) throw await readError(res);
   const data = await res.json();
-  const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  const choice = data.choices && data.choices[0];
+  if (choice && choice.finish_reason === 'length') throw tooLongError();
+  const text = choice && choice.message && choice.message.content;
   if (!text) throw new Error('The AI returned an empty answer.');
   return text;
 }
@@ -427,6 +441,7 @@ Rules:
 - Short-answer, broad, fill-in-the-blank, true/false, matching and numerical questions are "written".
 - Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself and add "guessed": true to that question.
 - Marks as printed. If not printed: MCQ 1, others your best estimate.
+- Keep model answers short: the key points or final result only, at most 2–3 sentences, so the whole paper fits in one reply.
 - Keep Markdown (tables, bold, line breaks as \\n) inside strings.${content == null ? '' : `
 
 <<<PAPER
@@ -443,13 +458,34 @@ Reply with JSON: {"marks": [{"id": "question id", "part": part number, "marks": 
 ${JSON.stringify(items, null, 1)}`;
 }
 
+// Models often leave LaTeX backslashes (\frac), raw line breaks or trailing commas in JSON strings.
+function repairJSON(t) {
+  let out = '', inStr = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (!inStr) { out += c; if (c === '"') inStr = true; continue; }
+    if (c === '\\') {
+      const n = t[i + 1];
+      const cmd = (t.slice(i + 1).match(/^[a-z]+/i) || [''])[0];
+      const latex = 'bfr'.includes(n) ? cmd.length > 1 : 'nt'.includes(n) && /^(neq|nabla|nu|ne|not|ni|times|theta|tan|tanh|tau|text|textbf|to|tfrac|top|triangle|therefore)$/.test(cmd);
+      if (n && '"\\/bfnrt'.includes(n) && !latex) { out += c + n; i++; }
+      else if (n === 'u' && /^[0-9a-f]{4}$/i.test(t.slice(i + 2, i + 6))) { out += t.slice(i, i + 6); i += 5; }
+      else out += '\\\\';
+      continue;
+    }
+    if (c === '"') inStr = false;
+    out += c === '\n' ? '\\n' : c === '\r' ? '' : c === '\t' ? '\\t' : c;
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
 function parseJSONReply(text) {
   const t = String(text || '');
   const a = t.indexOf('{');
   const b = t.lastIndexOf('}');
   try {
     if (a < 0 || b < a) throw new Error();
-    return JSON.parse(t.slice(a, b + 1));
+    try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { return JSON.parse(repairJSON(t.slice(a, b + 1))); }
   } catch (e) {
     throw new Error("The AI's reply wasn't in the expected format. Please try again.");
   }
