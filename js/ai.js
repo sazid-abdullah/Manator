@@ -198,7 +198,7 @@ async function callModel(provider, model, system, user, opts) {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [...files.map(x => ({ inlineData: { mimeType: x.mimeType, data: x.data } })), { text: user }] }],
-        generationConfig: { temperature, maxOutputTokens: maxTokens },
+        generationConfig: { temperature, maxOutputTokens: maxTokens, ...(opts.json ? { responseMimeType: 'application/json' } : {}) },
       }),
     });
     if (!res.ok) throw await readError(res);
@@ -408,6 +408,53 @@ function cleanDoc(text) {
 }
 
 // Minimal Markdown → HTML. Input is escaped first, so AI output cannot inject markup.
+// ── Exam mode: paper → structured exam, and written-answer marking ──
+const EXAM_JSON_SYSTEM = `You convert exam papers into JSON for an on-screen exam app. Output only valid JSON: no Markdown fences, no comments, no text before or after.`;
+
+function examJsonPrompt(content) {
+  return `Convert this exam paper into JSON with exactly this shape:
+{"title": "short title", "duration": minutes printed on the paper (0 if none), "instructions": "general instructions printed on the paper, or empty", "cqChoose": how many creative questions the student must answer (0 if all),
+ "questions": [
+  {"type": "mcq", "n": "1", "stimulus": "", "text": "the question", "options": ["…", "…", "…", "…"], "answer": 0, "marks": 1},
+  {"type": "cq", "n": "1", "stimulus": "the stimulus / passage / data (উদ্দীপক)", "parts": [{"label": "ক", "text": "the part", "marks": 1, "answer": "model answer"}]},
+  {"type": "written", "n": "1", "text": "the question", "marks": 2, "answer": "model answer"}
+ ]}
+Rules:
+- Keep every question in the paper, in the same order and language, with its wording, numbers and symbols unchanged. Do not add, drop or merge questions.
+- "answer" for an MCQ is the 0-based index of the correct option (0 = first option).
+- MCQ options: the option text only, without labels like (ক), (a) or A. For multiple-completion MCQs, put the i/ii/iii statements in "text" (with line breaks) and the combinations as the options.
+- MCQs that share a stimulus or passage: copy it into "stimulus" of each of those questions.
+- Short-answer, broad, fill-in-the-blank, true/false, matching and numerical questions are "written".
+- Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself.
+- Marks as printed. If not printed: MCQ 1, others your best estimate.
+- Keep Markdown (tables, bold, line breaks as \\n) inside strings.
+
+<<<PAPER
+${content}
+PAPER>>>`;
+}
+
+const MARK_SYSTEM = `You are a fair, experienced board examiner marking a student's written answers. Mark the way a board examiner would: give credit for correct ideas even when the wording is different from the model answer, give partial marks for partly correct work, and follow level-wise marking for creative questions. Output only valid JSON.`;
+
+function markPrompt(items) {
+  return `Mark each student answer below out of its "max" marks. Marks can be in steps of 0.5.
+Reply with JSON: {"marks": [{"id": "question id", "part": part number, "marks": number, "reason": "one short sentence in English"}]}
+
+${JSON.stringify(items, null, 1)}`;
+}
+
+function parseJSONReply(text) {
+  const t = String(text || '');
+  const a = t.indexOf('{');
+  const b = t.lastIndexOf('}');
+  try {
+    if (a < 0 || b < a) throw new Error();
+    return JSON.parse(t.slice(a, b + 1));
+  } catch (e) {
+    throw new Error("The AI's reply wasn't in the expected format. Please try again.");
+  }
+}
+
 function renderMarkdown(md) {
   const lines = esc(md || '').replace(/\r/g, '').split('\n');
   const out = [];

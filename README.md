@@ -10,6 +10,7 @@ Personal tuition manager: students, daily lesson log, fee contracts, money track
   - Exam papers can follow the Bangladesh board pattern: creative questions (stimulus + ক/খ/গ/ঘ, or ক2 খ4 গ4 for maths) and board-style MCQ, with exact marks.
   - Attach a past paper or textbook pages (PDF, photo, Word or text) so the AI writes similar new questions, or teaches only from that material. Gemini reads PDFs and photos directly (including scans); other providers get the PDF's text.
   - A second AI pass checks the answers and lists possible problems; "Fix these problems" or the change box revises the paper without starting over.
+- **Exam mode** – press **Start exam** on any exam paper (AI-made or imported) to run it on this device: countdown timer, tap-to-answer MCQs, answer boxes for creative and written questions, and automatic submission when time runs out. MCQs are marked automatically; you mark written answers (with optional AI suggestions). Results are saved per student. The paper is turned into an on-screen exam with one AI call; after that the exam works offline.
 - **Backup** – everything lives in your browser (`localStorage`). Download a backup file regularly and restore it on another device.
 
 ## Run

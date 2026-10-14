@@ -14,6 +14,8 @@ function defaultState() {
     expenses: [],
     docs: [],
     goals: [],
+    exams: [],
+    attempts: [],
   };
 }
 
@@ -38,6 +40,46 @@ const optStr = v => (typeof v === 'string' && v ? v : null);
 const oneOf = (v, list, def) => (list.includes(v) ? v : def);
 const isDate = v => typeof v === 'string' && DATE_RE.test(v);
 const strMap = v => Object.fromEntries(Object.entries(isObj(v) ? v : {}).filter(([, x]) => typeof x === 'string'));
+
+const OPT_LETTERS = ['a', 'b', 'c', 'd', 'e', 'f'];
+const OPT_LETTERS_BN = ['ক', 'খ', 'গ', 'ঘ', 'ঙ', 'চ'];
+function optIndex(v, n) {
+  let i = typeof v === 'number' ? v : NaN;
+  if (typeof v === 'string') {
+    const t = v.trim().replace(/[().]/g, '').toLowerCase();
+    i = /^\d+$/.test(t) ? Number(t) : OPT_LETTERS.indexOf(t) >= 0 ? OPT_LETTERS.indexOf(t) : OPT_LETTERS_BN.indexOf(t);
+  }
+  return Number.isInteger(i) && i >= 0 && i < n ? i : null;
+}
+
+// Structured exam used by exam mode. Bad or empty questions are dropped.
+function normalizeExam(x) {
+  x = isObj(x) ? x : {};
+  const seen = new Set();
+  const questions = (Array.isArray(x.questions) ? x.questions : []).filter(isObj).map((q, i) => {
+    let id = str(q.id, 40) || `q${i + 1}`;
+    if (seen.has(id)) id = `${id}_${i}`;
+    seen.add(id);
+    const n = str(q.n, 12) || String(i + 1);
+    if (q.type === 'mcq') {
+      const options = (Array.isArray(q.options) ? q.options : []).map(o => str(o, 4000).trim()).filter(Boolean).slice(0, 6);
+      if (options.length < 2 || !str(q.text).trim()) return null;
+      return { id, n, type: 'mcq', stimulus: str(q.stimulus), text: str(q.text), options, answer: optIndex(q.answer, options.length), marks: num(q.marks) > 0 ? num(q.marks) : 1 };
+    }
+    if (q.type === 'cq') {
+      const parts = (Array.isArray(q.parts) ? q.parts : []).filter(isObj)
+        .map(p => ({ label: str(p.label, 12), text: str(p.text), marks: num(p.marks) > 0 ? num(p.marks) : 1, answer: str(p.answer) }))
+        .filter(p => p.text.trim());
+      return parts.length ? { id, n, type: 'cq', stimulus: str(q.stimulus), parts } : null;
+    }
+    if (!str(q.text).trim()) return null;
+    return { id, n, type: 'written', text: str(q.text), marks: num(q.marks) > 0 ? num(q.marks) : 1, answer: str(q.answer) };
+  }).filter(Boolean);
+  return {
+    title: str(x.title, 300) || 'Exam', duration: Math.min(600, Math.max(1, Math.round(num(x.duration)) || 60)),
+    instructions: str(x.instructions), cqChoose: Math.max(0, Math.round(num(x.cqChoose))), questions,
+  };
+}
 
 const RECORD_SHAPES = {
   students: x => x.name && {
@@ -70,6 +112,12 @@ const RECORD_SHAPES = {
     ...x, type: oneOf(x.type, ['plan', 'exam', 'worksheet'], 'exam'), title: str(x.title, 300) || 'Untitled', content: str(x.content, 2000000),
     studentId: optStr(x.studentId), createdAt: typeof x.createdAt === 'string' && !isNaN(Date.parse(x.createdAt)) ? x.createdAt : new Date().toISOString(),
   }),
+  exams: x => { const e = normalizeExam(x); return e.questions.length > 0 && { ...x, ...e, docId: optStr(x.docId), hash: str(x.hash, 40) }; },
+  attempts: x => typeof x.examId === 'string' && num(x.startedAt) > 0 && {
+    ...x, title: str(x.title, 300), studentId: optStr(x.studentId), startedAt: num(x.startedAt), endsAt: num(x.endsAt) || num(x.startedAt),
+    submittedAt: num(x.submittedAt) || null, auto: !!x.auto, status: oneOf(x.status, ['running', 'submitted', 'marked'], 'submitted'),
+    answers: isObj(x.answers) ? x.answers : {}, marks: isObj(x.marks) ? x.marks : {}, aiMarks: isObj(x.aiMarks) ? x.aiMarks : {},
+  },
 };
 
 function normalizeState(data) {
@@ -198,6 +246,7 @@ function deleteStudent(id) {
   db.lessons = db.lessons.filter(l => l.studentId !== id);
   db.contracts = db.contracts.filter(c => c.studentId !== id);
   db.payments = db.payments.filter(p => p.studentId !== id);
+  db.attempts = db.attempts.filter(a => a.studentId !== id);
   db.docs = db.docs.map(d => (d.studentId === id ? { ...d, studentId: null } : d));
   return save();
 }

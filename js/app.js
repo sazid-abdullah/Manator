@@ -16,6 +16,7 @@ const ui = {
   moneyQ: '',
   moneyAI: null,
   moneyBusy: false,
+  examBusy: false,
 };
 let lastRoute = '';
 let installPrompt = null;
@@ -126,6 +127,8 @@ function parseHash() {
 function render() {
   const { parts, query } = parseHash();
   const route = parts[0] || 'home';
+  document.body.classList.remove('exam-mode');
+  finishExpiredAttempts();
   document.querySelectorAll('#nav a').forEach(a => {
     const r = a.dataset.route;
     a.classList.toggle('active', r === route || (r === 'students' && route === 'student'));
@@ -149,8 +152,12 @@ function render() {
       if (query.toString()) { history.replaceState(null, '', '#/ai'); }
       html = viewAI(); after = bindAI; break;
     case 'settings': html = viewSettings(); after = bindSettings; break;
+    case 'exam': html = viewExam(parts[1]); after = bindExam; break;
+    case 'result': html = viewResult(parts[1]); after = bindResult; break;
     default: html = viewHome();
   }
+  const running = route !== 'exam' && db.attempts.find(a => a.status === 'running');
+  if (running) html = `<div class="notice warn">An exam is running: <b>${esc(running.title)}</b>, ${fmtClock(running.endsAt - Date.now())} left. <a href="#/exam/${running.id}">Go back to the exam</a></div>` + html;
   view.innerHTML = html;
   if (after) after();
   const key = parts.join('/');
@@ -349,6 +356,10 @@ function viewStudent(s) {
       ${contractCards ? `<div class="grid-2">${contractCards}</div>` : `<div class="card empty">No contract yet. Add one to track fees (e.g. ${money(3000)} every 12 classes, or monthly).</div>`}</div>
     <div class="section"><h2>Classes <a class="small" href="#/classes?student=${s.id}">Open in class log</a></h2>
       ${lessons.length ? lessons.slice(0, 15).map(l => lessonCard(l, { hideStudent: true })).join('') + (lessons.length > 15 ? `<a class="btn sm" href="#/classes?student=${s.id}">Show all ${lessons.length}</a>` : '') : '<div class="card empty">No classes logged yet.</div>'}</div>
+    <div class="section"><h2>Exams</h2><div class="card"><div class="list">${(() => {
+      const ats = db.attempts.filter(a => a.studentId === s.id).sort((a, b) => b.startedAt - a.startedAt);
+      return ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams yet. Open an exam paper (AI → Saved) and press Start exam.</div>';
+    })()}</div></div></div>
     <div class="section"><h2>Payments</h2><div class="card"><div class="list">${payments.length ? payments.map(paymentRow).join('') : '<div class="empty">No payments yet.</div>'}</div></div></div>
     <div class="section actions">
       <button class="btn ghost" data-action="toggle-archive" data-id="${s.id}">${s.active === false ? 'Unarchive student' : 'Archive student'}</button>
@@ -897,7 +908,7 @@ function exportCSV() {
 }
 
 // ── AI ───────────────────────────────────────────────────────
-const AI_TOOLS = { plan: 'Lesson plan', exam: 'Exam paper', worksheet: 'Worksheet', saved: 'Saved' };
+const AI_TOOLS = { plan: 'Lesson plan', exam: 'Exam paper', worksheet: 'Worksheet', saved: 'Saved', results: 'Exam results' };
 const EXAM_TYPES = ['Multiple choice (MCQ)', 'Short answer', 'Broad / creative questions', 'Fill in the blanks', 'True / False', 'Matching', 'Problem solving / numericals'];
 const LANGS = ['English', 'Bangla', 'English + Bangla'];
 
@@ -1006,6 +1017,11 @@ function viewAI() {
   const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${esc(p.name)} · ${esc(aiModel())}</div></div></div>
     ${ready ? '' : `<div class="notice warn">Connect a free AI provider first: <a href="#/settings">Settings → AI</a>. Google Gemini's free key takes a minute to create.</div>`}
     <div class="seg" id="ai-tools" style="margin-bottom:16px">${Object.entries(AI_TOOLS).map(([k, v]) => `<button data-tool="${k}" class="${tool === k ? 'active' : ''}">${v}</button>`).join('')}</div>`;
+  if (tool === 'results') {
+    const ats = db.attempts.filter(a => !ui.docsStudent || a.studentId === ui.docsStudent).sort((a, b) => b.startedAt - a.startedAt);
+    return head + `<div class="toolbar"><select data-filter="docsStudent" aria-label="Student">${studentOptions(ui.docsStudent, true, 'All students')}</select></div>
+      <div class="card"><div class="list">${ats.length ? ats.map(attemptRow).join('') : '<div class="empty">No exams taken yet. Open an exam paper in Saved, or generate one, and press Start exam.</div>'}</div></div>`;
+  }
   if (tool === 'saved') {
     const docs = db.docs
       .filter(x => !ui.docsType || x.type === ui.docsType)
@@ -1039,6 +1055,7 @@ function aiResultHTML(r) {
         <button class="btn sm" data-action="ai-print">Print</button>
         ${hasKey ? '<button class="btn sm" data-action="ai-print-paper">Print without answers</button>' : ''}
         ${r.tool !== 'plan' ? `<button class="btn sm" data-action="ai-check"${busy}>Check paper</button>` : ''}
+        ${r.tool === 'exam' ? `<button class="btn sm" data-action="ai-exam"${busy}>Start exam</button>` : ''}
         ${r.prev ? `<button class="btn sm ghost" data-action="ai-undo"${busy}>Undo change</button>` : ''}
         <button class="btn sm ghost" data-action="ai-regen"${busy}>Regenerate</button></div></div>
     ${check}
@@ -1426,10 +1443,11 @@ function importDocForm() {
 function openDoc(doc) {
   const hasKey = !!splitAnswerKey(doc.content).answers;
   openModal(doc.title, `<div class="muted small" style="margin-bottom:10px">${esc(AI_TOOLS[doc.type] || doc.type)} · ${esc(fmtDate(doc.createdAt.slice(0, 10)))}${doc.studentId ? ' · ' + esc(studentName(doc.studentId)) : ''}</div>
-    <div class="actions" style="margin-bottom:12px"><button class="btn sm" id="d-print">Print</button>${hasKey ? '<button class="btn sm" id="d-paper">Print without answers</button>' : ''}<button class="btn sm" id="d-copy">Copy</button><button class="btn sm" id="d-edit">Edit text</button><button class="btn sm danger" id="d-del">Delete</button></div>
+    <div class="actions" style="margin-bottom:12px">${doc.type === 'exam' ? '<button class="btn sm primary" id="d-exam">Start exam</button>' : ''}<button class="btn sm" id="d-print">Print</button>${hasKey ? '<button class="btn sm" id="d-paper">Print without answers</button>' : ''}<button class="btn sm" id="d-copy">Copy</button><button class="btn sm" id="d-edit">Edit text</button><button class="btn sm danger" id="d-del">Delete</button></div>
     <div class="doc" id="d-body">${renderMarkdown(doc.content)}</div>`,
   body => {
     body.querySelector('#d-print').onclick = () => printMarkdown(doc.title, doc.content);
+    if (doc.type === 'exam') body.querySelector('#d-exam').onclick = () => openExamSetup(doc);
     if (hasKey) body.querySelector('#d-paper').onclick = () => printMarkdown(doc.title, splitAnswerKey(doc.content).paper);
     body.querySelector('#d-copy').onclick = () => copyText(doc.content);
     body.querySelector('#d-del').onclick = () => {
@@ -1443,6 +1461,370 @@ function openDoc(doc) {
       body.querySelector('#d-form').onsubmit = e => { e.preventDefault(); const cur = liveRecord('docs', doc); if (!cur) return closeModal(); cur.content = e.target.content.value; if (!save()) return; openDoc(cur); toast('Saved'); };
     };
   });
+}
+
+// ── Exam mode ────────────────────────────────────────────────
+let examTimer = null;
+let examSaveTimer = null;
+function getExam(id) { return db.exams.find(e => e.id === id); }
+function getAttempt(id) { return db.attempts.find(a => a.id === id); }
+function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36) + s.length.toString(36); }
+function fmtClock(ms) {
+  const t = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${pad2(m)}:${pad2(s)}` : `${pad2(m)}:${pad2(s)}`;
+}
+function fmtN(n) { return String(Math.round(n * 10) / 10); }
+function optLabels(ex) { return /[\u0980-\u09FF]/.test(JSON.stringify(ex.questions.slice(0, 8))) ? OPT_LETTERS_BN : OPT_LETTERS; }
+function cqTotal(q) { return q.parts.reduce((a, p) => a + p.marks, 0); }
+function qParts(q) { return q.type === 'cq' ? q.parts : [{ label: '', text: q.text, marks: q.marks, answer: q.answer }]; }
+function partAnswer(at, q, i) { const a = at.answers[q.id]; return String((q.type === 'cq' ? a && a[i] : a) || ''); }
+function partMark(at, q, i) {
+  const m = at.marks[q.id];
+  const v = q.type === 'cq' ? m && m[i] : m;
+  return v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+}
+function cqLimit(ex, count) { return ex.cqChoose > 0 && ex.cqChoose < count ? ex.cqChoose : count; }
+const sumOf = list => list.reduce((a, b) => a + b, 0);
+
+function examStats(ex) {
+  const mcq = ex.questions.filter(q => q.type === 'mcq');
+  const cq = ex.questions.filter(q => q.type === 'cq');
+  const wr = ex.questions.filter(q => q.type === 'written');
+  const cqMax = sumOf(cq.map(cqTotal).sort((a, b) => b - a).slice(0, cqLimit(ex, cq.length)));
+  return { mcq: mcq.length, cq: cq.length, written: wr.length, noKey: mcq.filter(q => q.answer == null).length,
+    max: sumOf(mcq.map(q => q.marks)) + cqMax + sumOf(wr.map(q => q.marks)) };
+}
+function examSummary(ex) {
+  const s = examStats(ex);
+  return [s.mcq && `${s.mcq} MCQ`, s.cq && `${s.cq} creative question${s.cq === 1 ? '' : 's'}${cqLimit(ex, s.cq) < s.cq ? ` (answer any ${ex.cqChoose})` : ''}`,
+    s.written && `${s.written} written`, `${fmtN(s.max)} marks`, `${ex.duration} min`].filter(Boolean).join(' · ');
+}
+
+// Best `cqChoose` creative questions count, as when a student answers more than required.
+function attemptScore(ex, at) {
+  let mcqGot = 0, mcqRight = 0, pending = 0;
+  const mcq = ex.questions.filter(q => q.type === 'mcq');
+  for (const q of mcq) {
+    if (q.answer == null) { if (at.answers[q.id] != null) pending++; continue; }
+    if (at.answers[q.id] === q.answer) { mcqGot += q.marks; mcqRight++; }
+  }
+  const written = q => sumOf(qParts(q).map((p, i) => {
+    const m = partMark(at, q, i);
+    if (m == null) { if (partAnswer(at, q, i).trim()) pending++; return 0; }
+    return Math.min(Math.max(m, 0), p.marks);
+  }));
+  const cqs = ex.questions.filter(q => q.type === 'cq');
+  const cqGot = sumOf(cqs.map(written).sort((a, b) => b - a).slice(0, cqLimit(ex, cqs.length)));
+  const wrGot = sumOf(ex.questions.filter(q => q.type === 'written').map(written));
+  return { got: mcqGot + cqGot + wrGot, max: examStats(ex).max, mcqGot, mcqRight, mcqCount: mcq.length, pending };
+}
+
+function finishExpiredAttempts() {
+  let changed = false;
+  for (const a of db.attempts) {
+    if (a.status === 'running' && Date.now() >= a.endsAt) { a.status = 'submitted'; a.submittedAt = a.endsAt; a.auto = true; changed = true; }
+  }
+  if (changed) save();
+}
+
+function attemptRow(at) {
+  const ex = getExam(at.examId);
+  const sc = ex && attemptScore(ex, at);
+  const badge = at.status === 'running' ? '<span class="badge yellow">Running</span>'
+    : sc ? `<span class="badge${sc.pending ? ' yellow' : ' green'}">${fmtN(sc.got)} / ${fmtN(sc.max)}${sc.pending ? ' · to mark' : ''}</span>` : '';
+  return `<a class="row" href="#/${at.status === 'running' ? 'exam' : 'result'}/${at.id}"><div class="grow"><div class="title">${esc(at.title || 'Exam')}</div>
+    <div class="meta">${esc(fmtDate(toISO(new Date(at.startedAt))))}${at.studentId ? ' · ' + esc(studentName(at.studentId)) : ''}</div></div>${badge}</a>`;
+}
+
+function openExamSetup(doc, opts) {
+  opts = opts || {};
+  const hash = hashStr(doc.content);
+  const ex = db.exams.find(e => e.docId === doc.id && e.hash === hash);
+  if (!ex) {
+    openModal('Start exam', `<p>First, Manator turns this paper into an on-screen exam with tap-to-answer MCQs, answer boxes and the answer key. This uses the AI once; after that the exam works offline.</p>
+      <p class="help" style="margin-top:8px">Only the paper's text is sent to the AI.</p><div class="notice err" id="ex-err" hidden></div>
+      <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ex-prep">Prepare exam</button></div>`, body => {
+      body.querySelector('#ex-prep').onclick = async e => {
+        if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
+        try {
+          const n = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
+          if (!n.questions.length) throw new Error('No questions were found in this paper.');
+          if (!document.body.contains(btn)) return;
+          db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
+          db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash, createdAt: new Date().toISOString() });
+          if (!save()) return;
+          openExamSetup(doc, opts);
+        } catch (err) {
+          if (!document.body.contains(btn)) return toast(`Couldn't prepare the exam: ${err.message || err}`, 'error');
+          const box = body.querySelector('#ex-err');
+          box.hidden = false;
+          box.textContent = err.message || String(err);
+          btn.disabled = false;
+          btn.textContent = 'Try again';
+        }
+      };
+    });
+    return;
+  }
+  const st = examStats(ex);
+  openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
+    ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
+    <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
+    <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
+    <div class="help">Hand the device to the student. The timer starts when you press Start exam, and the exam submits itself when time runs out.</div>
+    <div class="form-actions"><button type="button" class="btn ghost" id="ex-reread">Read paper again</button><button type="button" class="btn" id="ex-preview">Preview with answers</button><button class="btn primary">Start exam</button></div></form>`, body => {
+    body.querySelector('#ex-reread').onclick = () => { ex.hash = ''; if (!save()) return; openExamSetup(doc, opts); };
+    body.querySelector('#ex-preview').onclick = () => openModal(ex.title, `<div class="actions" style="margin-bottom:12px"><button class="btn sm" id="ex-back">← Back</button></div>${examPreviewHTML(ex)}`,
+      b2 => { b2.querySelector('#ex-back').onclick = () => openExamSetup(doc, opts); });
+    body.querySelector('form').onsubmit = e => {
+      e.preventDefault();
+      const f = formData(e.target);
+      const now = Date.now();
+      const at = { id: uid(), examId: ex.id, title: ex.title, studentId: f.studentId || null, startedAt: now,
+        endsAt: now + Math.min(600, Math.max(1, Math.round(num(f.duration)))) * 60e3, submittedAt: null, auto: false, status: 'running', answers: {}, marks: {}, aiMarks: {} };
+      db.attempts.push(at);
+      if (!save()) return;
+      closeModal();
+      location.hash = `#/exam/${at.id}`;
+    };
+  });
+}
+
+function examPreviewHTML(ex) {
+  const L = optLabels(ex);
+  return ex.questions.map(q => `<div class="exam-q">${q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : ''}
+    ${q.type === 'mcq' ? `<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div><ol class="exam-prev-opts">${q.options.map((o, i) => `<li class="${i === q.answer ? 'pos' : ''}">${L[i]}. ${esc(o)}${i === q.answer ? ' ✓' : ''}</li>`).join('')}</ol>`
+      : `${q.type === 'cq' ? `<div><b>${esc(q.n)}.</b></div>` : ''}${qParts(q).map(p => `<div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
+        ${p.answer ? `<div class="exam-ans muted">${esc(p.answer)}</div>` : ''}`).join('')}`}</div>`).join('');
+}
+
+function examProgress(ex, at) {
+  let done = 0, total = 0;
+  for (const q of ex.questions) {
+    if (q.type === 'mcq') { total++; if (at.answers[q.id] != null) done++; continue; }
+    qParts(q).forEach((p, i) => { total++; if (partAnswer(at, q, i).trim()) done++; });
+  }
+  return { done, total };
+}
+
+function viewExam(id) {
+  const at = getAttempt(id);
+  const ex = at && getExam(at.examId);
+  if (!at || !ex) return '<div class="empty">Exam not found. <a href="#/">Home</a></div>';
+  if (at.status !== 'running') {
+    const sc = attemptScore(ex, at);
+    return `<div class="card exam-done"><h1>${at.auto ? "Time's up" : 'Exam submitted'}</h1>
+      <p class="muted">${esc(at.title)}${at.studentId ? ' · ' + esc(studentName(at.studentId)) : ''}</p>
+      ${sc.mcqCount ? `<div class="exam-big">${sc.mcqRight} of ${sc.mcqCount} MCQs correct</div>` : ''}
+      <p>${ex.questions.some(q => q.type !== 'mcq') ? 'Please give the device back to your tutor to mark the written answers.' : 'Please give the device back to your tutor.'}</p>
+      <div class="actions" style="justify-content:center;margin-top:14px"><a class="btn primary" href="#/result/${at.id}">See result and mark</a></div></div>`;
+  }
+  document.body.classList.add('exam-mode');
+  const L = optLabels(ex);
+  const pr = examProgress(ex, at);
+  const stim = q => (q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : '');
+  const mcq = ex.questions.filter(q => q.type === 'mcq').map(q => `<div class="card exam-q">${stim(q)}<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>
+    <div class="exam-opts" role="radiogroup">${q.options.map((o, i) => `<label class="exam-opt"><input type="radio" name="${q.id}" value="${i}"${at.answers[q.id] === i ? ' checked' : ''}><span class="exam-ol">${L[i]}</span><span class="doc">${renderMarkdown(o)}</span></label>`).join('')}</div></div>`).join('');
+  const writtenQ = q => `<div class="card exam-q">${q.type === 'cq' ? `<div class="exam-qn"><b>${esc(q.n)}.</b> <span class="muted small">${fmtN(cqTotal(q))} marks</span></div>` : ''}${stim(q)}
+    ${qParts(q).map((p, i) => `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
+      <textarea rows="${p.marks > 2 ? 6 : 3}" data-q="${q.id}" data-part="${i}" aria-label="Answer ${esc(q.n)}${esc(p.label)}" placeholder="Write your answer here, or on paper">${esc(partAnswer(at, q, i))}</textarea></div>`).join('')}</div>`;
+  const cqs = ex.questions.filter(q => q.type === 'cq');
+  const wr = ex.questions.filter(q => q.type === 'written');
+  return `<div class="exam-bar"><div class="exam-title"><b>${esc(at.title)}</b><div class="muted small" id="exam-progress">${pr.done} of ${pr.total} answered</div></div>
+      <div class="exam-timer" id="exam-timer" role="timer" aria-label="Time left">${fmtClock(at.endsAt - Date.now())}</div>
+      <button class="btn primary sm" data-action="exam-submit" data-id="${at.id}">Submit</button></div>
+    ${ex.instructions ? `<div class="notice">${esc(ex.instructions)}</div>` : ''}
+    <form id="exam-form" autocomplete="off">
+      ${mcq ? `<div class="section"><h2>Multiple choice <span class="muted small">tap one answer</span></h2>${mcq}</div>` : ''}
+      ${cqs.length ? `<div class="section"><h2>Creative questions${cqLimit(ex, cqs.length) < cqs.length ? ` <span class="muted small">answer any ${ex.cqChoose}</span>` : ''}</h2>${cqs.map(writtenQ).join('')}</div>` : ''}
+      ${wr.length ? `<div class="section"><h2>Written questions</h2>${wr.map(writtenQ).join('')}</div>` : ''}
+    </form>
+    <div class="form-actions"><button class="btn primary" data-action="exam-submit" data-id="${at.id}">Submit exam</button></div>`;
+}
+
+function bindExam() {
+  clearInterval(examTimer);
+  const id = parseHash().parts[1];
+  const at = getAttempt(id);
+  const ex = at && getExam(at.examId);
+  if (!at || !ex || at.status !== 'running') return;
+  const live = () => { const a = getAttempt(id); return a && a.status === 'running' ? a : null; };
+  const progress = a => { const p = examProgress(ex, a); const el = document.getElementById('exam-progress'); if (el) el.textContent = `${p.done} of ${p.total} answered`; };
+  const form = document.getElementById('exam-form');
+  form.onsubmit = e => e.preventDefault();
+  form.addEventListener('change', e => {
+    const t = e.target, a = live();
+    if (!a) return;
+    if (t.type === 'radio') { a.answers[t.name] = Number(t.value); save(); }
+    else if (t.tagName === 'TEXTAREA') { clearTimeout(examSaveTimer); save(); }
+    progress(a);
+  });
+  form.addEventListener('input', e => {
+    const t = e.target, a = live();
+    if (!a || t.tagName !== 'TEXTAREA') return;
+    const q = ex.questions.find(x => x.id === t.dataset.q);
+    if (!q) return;
+    if (q.type === 'cq') a.answers[q.id] = { ...(isObj(a.answers[q.id]) ? a.answers[q.id] : {}), [t.dataset.part]: t.value };
+    else a.answers[q.id] = t.value;
+    progress(a);
+    clearTimeout(examSaveTimer);
+    examSaveTimer = setTimeout(save, 600);
+  });
+  const tick = () => {
+    const a = live(), r = parseHash().parts;
+    if (!a || r[0] !== 'exam' || r[1] !== id) { clearInterval(examTimer); return; }
+    const left = a.endsAt - Date.now();
+    if (left <= 0) { clearInterval(examTimer); submitAttempt(id, true); return; }
+    const el = document.getElementById('exam-timer');
+    if (el) {
+      el.textContent = fmtClock(left);
+      el.classList.toggle('warn', left <= 300e3 && left > 60e3);
+      el.classList.toggle('danger', left <= 60e3);
+    }
+    if (left <= 60e3 && !a.warned1) { a.warned1 = a.warned5 = true; toast('1 minute left', 'error'); }
+    else if (left <= 300e3 && !a.warned5) { a.warned5 = true; toast('5 minutes left'); }
+  };
+  tick();
+  examTimer = setInterval(tick, 1000);
+}
+
+function submitAttempt(id, auto) {
+  const a = getAttempt(id);
+  if (!a || a.status !== 'running') return;
+  clearTimeout(examSaveTimer);
+  a.status = 'submitted';
+  a.auto = !!auto;
+  a.submittedAt = Math.min(Date.now(), a.endsAt);
+  delete a.warned1;
+  delete a.warned5;
+  save();
+  if (!modalRoot.hidden) closeModal();
+  render();
+  if (auto) toast("Time's up. The exam was submitted.");
+}
+
+window.addEventListener('beforeunload', e => { if (document.body.classList.contains('exam-mode')) { e.preventDefault(); e.returnValue = ''; } });
+
+function viewResult(id) {
+  const at = getAttempt(id);
+  const ex = at && getExam(at.examId);
+  if (!at || !ex) return '<div class="empty">Result not found. <a href="#/ai?tool=results">All results</a></div>';
+  if (at.status === 'running') return `<div class="notice">This exam is still running. <a href="#/exam/${at.id}">Open it</a></div>`;
+  const sc = attemptScore(ex, at);
+  const L = optLabels(ex);
+  const mins = Math.max(1, Math.round(((at.submittedAt || at.endsAt) - at.startedAt) / 60e3));
+  const mcqs = ex.questions.filter(q => q.type === 'mcq');
+  const wqs = ex.questions.filter(q => q.type !== 'mcq');
+  const opt = (q, i) => `${L[i]}. ${esc(q.options[i])}`;
+  const mcqRows = mcqs.map(q => {
+    const a = at.answers[q.id];
+    const ok = q.answer != null && a === q.answer;
+    const badge = q.answer == null ? '<span class="badge yellow">No key</span>' : a == null ? '<span class="badge">—</span>' : ok ? '<span class="badge green">✓</span>' : '<span class="badge red">✗</span>';
+    return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>
+      <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)}${!ok && q.answer != null ? ` · Correct: ${opt(q, q.answer)}` : ''}</div></div>${badge}</div>`;
+  }).join('');
+  const sug = at.aiMarks || {};
+  const wrCards = wqs.map(q => `<div class="card exam-q">${q.type === 'cq' ? `<div class="exam-qn"><b>${esc(q.n)}.</b></div>` : ''}
+    ${q.stimulus ? `<details><summary class="small">Stimulus</summary><div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div></details>` : ''}
+    ${qParts(q).map((p, i) => {
+      const ans = partAnswer(at, q, i).trim();
+      const m = partMark(at, q, i);
+      const s = sug[`${q.id}:${i}`];
+      return `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
+        <div class="exam-ans">${ans ? esc(ans) : '<span class="muted">No answer typed (written on paper?)</span>'}</div>
+        ${p.answer ? `<details><summary class="small">Model answer</summary><div class="doc small">${renderMarkdown(p.answer)}</div></details>` : ''}
+        <div class="mark-row"><label class="mark-in">Marks <input type="number" name="m:${q.id}:${i}" min="0" max="${p.marks}" step="0.5" value="${m == null ? '' : m}" data-sug="${s ? s.marks : ''}"> / ${fmtN(p.marks)}</label>
+        ${s ? `<span class="help">AI suggests <b>${fmtN(s.marks)}</b>: ${esc(s.reason)}</span>` : ''}</div></div>`;
+    }).join('')}</div>`).join('');
+  const busy = ui.examBusy ? ' disabled' : '';
+  return `<div class="page-head"><div><h1>${esc(at.title)}</h1>
+      <div class="sub">${at.studentId ? esc(studentName(at.studentId)) + ' · ' : ''}${esc(fmtDate(toISO(new Date(at.startedAt))))} · ${mins} min${at.auto ? ' · submitted when time ran out' : ''}</div></div>
+      <div class="actions"><button class="btn ghost" data-action="exam-delete" data-id="${at.id}">Delete result</button></div></div>
+    <div class="stats">
+      <div class="card stat"><div class="label">Total</div><div class="value">${fmtN(sc.got)} / ${fmtN(sc.max)}</div><div class="hint">${sc.max ? Math.round((sc.got / sc.max) * 100) : 0}%${sc.pending ? ' so far' : ''}</div></div>
+      ${sc.mcqCount ? `<div class="card stat"><div class="label">MCQ</div><div class="value">${sc.mcqRight} / ${sc.mcqCount}</div><div class="hint">correct</div></div>` : ''}
+      ${wqs.length ? `<div class="card stat"><div class="label">Written</div><div class="value">${sc.pending ? sc.pending : '✓'}</div><div class="hint">${sc.pending ? 'answers to mark' : 'marked'}</div></div>` : ''}
+    </div>
+    ${wqs.length ? `<div class="section"><h2>Mark written answers</h2>
+      <p class="muted small" style="margin-bottom:10px">Type the marks for each part. For answers written on paper, read the paper and enter the marks here.${cqLimit(ex, wqs.filter(q => q.type === 'cq').length) < wqs.filter(q => q.type === 'cq').length ? ` Only the best ${ex.cqChoose} creative questions count.` : ''}</p>
+      <form id="mark-form" class="form">${wrCards}
+        <div class="form-actions"><button type="button" class="btn" data-action="exam-ai-mark" data-id="${at.id}"${busy}>${ui.examBusy ? `<span class="spinner"></span> ${esc(ui.examBusy)}` : 'Suggest marks with AI'}</button>
+          ${Object.keys(sug).length ? '<button type="button" class="btn" id="use-sug">Use AI marks</button>' : ''}<button class="btn primary">Save marks</button></div></form></div>` : ''}
+    ${mcqs.length ? `<div class="section"><h2>Multiple choice</h2><div class="card"><div class="list">${mcqRows}</div></div></div>` : ''}`;
+}
+
+function readMarkForm(form, at, ex) {
+  for (const input of form.querySelectorAll('input[name^="m:"]')) {
+    const [, qid, part] = input.name.split(':');
+    const q = ex.questions.find(x => x.id === qid);
+    if (!q) continue;
+    const max = Number(input.max);
+    const v = input.value.trim() === '' ? null : Math.min(max, Math.max(0, Number(input.value)));
+    if (q.type === 'cq') {
+      const m = { ...(isObj(at.marks[qid]) ? at.marks[qid] : {}) };
+      if (v == null || !Number.isFinite(v)) delete m[part]; else m[part] = v;
+      at.marks[qid] = m;
+    } else if (v == null || !Number.isFinite(v)) delete at.marks[qid];
+    else at.marks[qid] = v;
+  }
+}
+
+function bindResult() {
+  const form = document.getElementById('mark-form');
+  if (!form) return;
+  const id = parseHash().parts[1];
+  const use = form.querySelector('#use-sug');
+  if (use) use.onclick = () => form.querySelectorAll('input[data-sug]').forEach(i => { if (i.dataset.sug !== '') i.value = i.dataset.sug; });
+  form.onsubmit = e => {
+    e.preventDefault();
+    const at = getAttempt(id), ex = at && getExam(at.examId);
+    if (!at || !ex) return;
+    readMarkForm(form, at, ex);
+    at.status = 'marked';
+    if (!save()) return;
+    render();
+    toast('Marks saved');
+  };
+}
+
+async function aiMarkAttempt(id) {
+  const at = getAttempt(id), ex = at && getExam(at.examId);
+  if (!at || !ex || ui.examBusy) return;
+  const form = document.getElementById('mark-form');
+  if (form) readMarkForm(form, at, ex);
+  const items = ex.questions.filter(q => q.type !== 'mcq').map(q => ({
+    id: q.id, stimulus: q.stimulus || undefined,
+    parts: qParts(q).map((p, i) => ({ part: i, question: `${p.label ? p.label + '. ' : ''}${p.text}`, max: p.marks, model_answer: p.answer || undefined, student_answer: partAnswer(at, q, i).trim() }))
+      .filter(p => p.student_answer),
+  })).filter(x => x.parts.length);
+  if (!items.length) return toast('No typed answers to mark. Enter the marks for answers written on paper yourself.');
+  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); return; }
+  save();
+  ui.examBusy = 'Marking…';
+  render();
+  try {
+    const data = parseJSONReply(await callAI(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
+    const out = {};
+    for (const m of Array.isArray(data.marks) ? data.marks : []) {
+      const q = isObj(m) && ex.questions.find(x => x.id === m.id && x.type !== 'mcq');
+      const i = q && Math.round(num(m.part));
+      const p = q && qParts(q)[i];
+      if (!p) continue;
+      out[`${q.id}:${i}`] = { marks: Math.min(p.marks, Math.max(0, Math.round(num(m.marks) * 2) / 2)), reason: str(m.reason, 400) };
+    }
+    const cur = getAttempt(id);
+    if (cur) { cur.aiMarks = out; save(); }
+    toast(Object.keys(out).length ? 'AI marks ready. Check them, then press "Use AI marks" and Save.' : "The AI didn't suggest any marks. Try again.", Object.keys(out).length ? null : 'error');
+  } catch (err) {
+    toast(`Couldn't get AI marks: ${err.message || err}`, 'error');
+  } finally {
+    ui.examBusy = false;
+  }
+  if (parseHash().parts[0] === 'result') render();
 }
 
 // ── Settings ─────────────────────────────────────────────────
@@ -1685,6 +2067,27 @@ const ACTIONS = {
   'ai-check': () => checkAIResult(ui.aiResult),
   'ai-fix': () => { const r = ui.aiResult; if (r && r.check && r.check.report) reviseAIResult(r, `Fix these problems that a checker found. Where the checker is wrong, leave that question as it is.\n${r.check.report}`); },
   'ai-undo': () => { const r = ui.aiResult; if (!r || !r.prev || ui.aiBusy) return; r.content = r.prev; r.prev = null; r.check = null; r.savedId = null; render(); },
+  'ai-exam': () => {
+    const r = ui.aiResult;
+    if (!r || ui.aiBusy) return;
+    if (!r.savedId) ACTIONS['ai-save']();
+    const doc = r.savedId && db.docs.find(x => x.id === r.savedId);
+    if (doc) openExamSetup(doc, { studentId: r.studentId });
+  },
+  'exam-submit': d => {
+    const at = getAttempt(d.id), ex = at && getExam(at.examId);
+    if (!at || at.status !== 'running') return;
+    const p = examProgress(ex, at);
+    const left = p.total - p.done;
+    confirmDialog('Submit exam?', `${left ? `${left} question${left === 1 ? ' is' : 's are'} not answered yet. ` : ''}You can't change answers after submitting.`, 'Submit', () => submitAttempt(d.id));
+  },
+  'exam-ai-mark': d => aiMarkAttempt(d.id),
+  'exam-delete': d => confirmDialog('Delete this result?', 'The student\'s answers and marks for this exam will be deleted.', 'Delete', () => {
+    db.attempts = db.attempts.filter(a => a.id !== d.id);
+    if (!save()) return;
+    location.hash = '#/ai?tool=results';
+    toast('Result deleted');
+  }),
   'src-remove': d => {
     const form = document.getElementById('ai-form');
     if (form) readAIForm(form, ui.aiTool);
