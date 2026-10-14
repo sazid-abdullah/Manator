@@ -1571,7 +1571,7 @@ function openExamSetup(doc, opts) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
         try {
-          const n = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
+          const n = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
@@ -1594,11 +1594,14 @@ function openExamSetup(doc, opts) {
   openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
     ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
     ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
+    ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Manator can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
     <div class="help">Hand the device to the student. The timer starts when you press Start exam, and the exam submits itself when time runs out.</div>
-    <div class="form-actions"><button type="button" class="btn ghost" id="ex-reread">Read paper again</button><button type="button" class="btn" id="ex-preview">Preview with answers</button><button class="btn primary">Start exam</button></div></form>`, body => {
-    body.querySelector('#ex-reread').onclick = () => { ex.hash = ''; if (!save()) return; openExamSetup(doc, opts); };
+    <div class="form-actions">${isFileCopy(doc) ? '<button type="button" class="btn ghost" id="ex-reupload">Upload again</button>' : '<button type="button" class="btn ghost" id="ex-reread">Read paper again</button>'}<button type="button" class="btn" id="ex-preview">Preview with answers</button><button class="btn primary">Start exam</button></div></form>`, body => {
+    const reread = body.querySelector('#ex-reread'), reup = body.querySelector('#ex-reupload');
+    if (reread) reread.onclick = () => { ex.hash = ''; if (!save()) return; openExamSetup(doc, opts); };
+    if (reup) reup.onclick = () => uploadPaperForm(doc.studentId);
     body.querySelector('#ex-preview').onclick = () => openExamPreview(ex, doc, opts);
     body.querySelector('form').onsubmit = e => {
       e.preventDefault();
@@ -1620,7 +1623,7 @@ const IMAGE_MIME = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jp
 
 async function readPaperToExam(file) {
   const low = file.name.toLowerCase();
-  let content = null, text = null, files = [];
+  let content = null, text = null, files = [], skipped = 0;
   if (PAPER_FILES.test(low)) {
     if (file.size > SOURCE_FILE_MAX) throw new Error(`"${file.name}" is too big. PDFs and photos can be up to 14 MB.`);
     const pdf = low.endsWith('.pdf'), bytes = await file.arrayBuffer();
@@ -1632,13 +1635,17 @@ async function readPaperToExam(file) {
       text = r.text;
     }
   } else {
-    content = text = (await readImportFile(file)).content;
+    ({ content, skipped } = await readImportFile(file));
+    text = content;
     if (!content.trim()) throw new Error('No text found in this file.');
   }
-  const exam = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
+  const exam = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
   if (!exam.questions.length) throw new Error('No questions were found in this paper.');
-  return { exam, content };
+  return { exam, content, skipped };
 }
+
+// Library copy written from the AI's reading of a PDF or photo; the original file isn't kept.
+const isFileCopy = doc => PAPER_FILES.test(String(doc.meta?.importedFrom || '').toLowerCase());
 
 // Library copy of a paper the AI read from a PDF or photo, with the answer key at the end.
 function examToMarkdown(ex) {
@@ -1690,9 +1697,9 @@ function uploadPaperForm(studentId) {
       btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
       try {
         const d = formData(form);
-        const { exam, content } = await readPaperToExam(file);
+        const { exam, content, skipped } = await readPaperToExam(file);
         const title = d.title || (exam.title !== 'Exam' ? exam.title : file.name.replace(/\.[^.]+$/, ''));
-        const doc = { id: uid(), type: 'exam', title, content: content || examToMarkdown(exam), studentId: d.studentId || '', meta: { importedFrom: file.name }, createdAt: new Date().toISOString() };
+        const doc = { id: uid(), type: 'exam', title, content: content || examToMarkdown(exam), studentId: d.studentId || '', meta: skipped ? { importedFrom: file.name, skippedImages: skipped } : { importedFrom: file.name }, createdAt: new Date().toISOString() };
         const ex = { ...exam, title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: doc.createdAt };
         db.docs.push(doc); db.exams.push(ex);
         if (!save()) {
@@ -1724,9 +1731,10 @@ function openExamPreview(ex, doc, opts) {
       const [qid, i] = b.dataset.pkey.split(':');
       const q = ex.questions.find(x => x.id === qid);
       if (!q) return;
-      const prev = [q.answer, q.guessed];
+      const prev = [q.answer, q.guessed, doc.content, ex.hash];
       q.answer = Number(i); q.guessed = false;
-      if (!save()) { [q.answer, q.guessed] = prev; return; }
+      if (isFileCopy(doc)) { doc.content = examToMarkdown(ex); ex.hash = hashStr(doc.content); }
+      if (!save()) { [q.answer, q.guessed, doc.content, ex.hash] = prev; return; }
       b.closest('[data-pq]').innerHTML = prevMcqHTML(q, L, true);
     });
   });
@@ -2027,7 +2035,7 @@ async function aiMarkAttempt(id) {
   render();
   restoreMarkInputs(kept);
   try {
-    const data = parseJSONReply(await callAI(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
+    const data = (await callAIJSON(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
     const out = {};
     for (const m of Array.isArray(data.marks) ? data.marks : []) {
       const q = isObj(m) && ex.questions.find(x => x.id === m.id && x.type !== 'mcq');
