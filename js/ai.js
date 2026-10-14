@@ -153,6 +153,7 @@ async function readError(res) {
   else if (res.status === 429) msg = 'Free-tier limit reached. Wait a minute or switch model/provider in Settings. ' + msg;
   const err = new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
   err.status = res.status;
+  err.detail = String(text);
   return err;
 }
 
@@ -160,7 +161,7 @@ async function callAI(system, user, opts) {
   const provider = db.ai.provider;
   const c = cachedModels(provider);
   if (!c || Date.now() - c.at > MODEL_CACHE_MS) await fetchModelList(provider).catch(() => {});
-  let refreshed = false;
+  let refreshed = false, fails = 0;
   const tried = [];
   for (;;) {
     const model = aiModel(provider);
@@ -173,12 +174,13 @@ async function callAI(system, user, opts) {
       const gone = isModelGone(err);
       const explicit = chosenModel(provider) === model;
       // A 429 with "limit: 0" means the model isn't in this key's free tier at all.
-      const noFreeTier = err.status === 429 && /limit:\s*0\b/.test(err.message);
-      if (!(gone || err.status === 429) || (explicit && !gone) || tried.length >= 8) {
+      const noFreeTier = err.status === 429 && /limit:\s*0\b|"quotaValue":\s*"0"/.test(err.detail || err.message);
+      if (!(gone || err.status === 429) || (explicit && !gone) || fails >= 4 || tried.length >= 25) {
         if (explicit && noFreeTier) err.message = `${model} isn't free on your key. Choose "Auto" in Settings → AI. ` + err.message;
         throw err;
       }
       tried.push(model);
+      if (!noFreeTier) fails++;
       blockModel(provider, model, gone ? 30 * 86400e3 : noFreeTier ? 7 * 86400e3 : 3600e3);
       if (gone && !refreshed) { refreshed = true; await fetchModelList(provider).catch(() => {}); blockModel(provider, model, 30 * 86400e3); }
       if (explicit) { db.ai.models[provider] = ''; save(); }
@@ -479,6 +481,17 @@ function repairJSON(t) {
   return out.replace(/,(\s*[}\]])/g, '$1');
 }
 
+// One automatic retry, since a malformed JSON reply is usually a one-off.
+async function callAIJSON(system, user, opts) {
+  for (let i = 0; ; i++) {
+    const reply = await callAI(system, user, i ? { ...opts, temperature: 0 } : opts);
+    try { return parseJSONReply(reply); } catch (err) {
+      console.warn('Unreadable AI reply from', aiLastModel, String(reply).slice(0, 2000));
+      if (i) { err.message = `The AI's reply (${aiLastModel}) wasn't in the expected format, even on a second try. Press Try again, or choose another model in Settings → AI.`; throw err; }
+    }
+  }
+}
+
 function parseJSONReply(text) {
   const t = String(text || '');
   const a = t.indexOf('{');
@@ -487,7 +500,9 @@ function parseJSONReply(text) {
     if (a < 0 || b < a) throw new Error();
     try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { return JSON.parse(repairJSON(t.slice(a, b + 1))); }
   } catch (e) {
-    throw new Error("The AI's reply wasn't in the expected format. Please try again.");
+    const bad = new Error("The AI's reply wasn't in the expected format. Please try again.");
+    bad.badFormat = true;
+    throw bad;
   }
 }
 

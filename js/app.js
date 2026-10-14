@@ -1571,7 +1571,7 @@ function openExamSetup(doc, opts) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
         try {
-          const n = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
+          const n = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
@@ -1639,7 +1639,7 @@ async function readPaperToExam(file) {
     text = content;
     if (!content.trim()) throw new Error('No text found in this file.');
   }
-  const exam = normalizeExam(parseJSONReply(await callAI(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
+  const exam = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
   if (!exam.questions.length) throw new Error('No questions were found in this paper.');
   return { exam, content, skipped };
 }
@@ -2035,7 +2035,7 @@ async function aiMarkAttempt(id) {
   render();
   restoreMarkInputs(kept);
   try {
-    const data = parseJSONReply(await callAI(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
+    const data = (await callAIJSON(MARK_SYSTEM, markPrompt(items), { temperature: 0.2, json: true }));
     const out = {};
     for (const m of Array.isArray(data.marks) ? data.marks : []) {
       const q = isObj(m) && ex.questions.find(x => x.id === m.id && x.type !== 'mcq');
