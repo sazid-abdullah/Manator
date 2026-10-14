@@ -1674,7 +1674,7 @@ function viewExam(id) {
     </form>
     <button type="button" class="exam-listbtn" id="exam-list">${GRID_ICON}<span>${esc(T.list)}</span></button>
     <div class="exam-foot"><div class="exam-foot-in">
-      <span class="exam-timer" id="exam-timer" role="timer" aria-label="Time left">${fmtClock(at.endsAt - Date.now())}</span>
+      <span class="exam-timer" id="exam-timer" role="timer" aria-label="Time left">${examText(ex).num(fmtClock(at.endsAt - Date.now()))}</span>
       <button type="button" class="exam-submit" data-action="exam-submit" data-id="${at.id}">${esc(T.submit)}</button>
       <span class="exam-count" id="exam-progress" aria-label="${esc(T.answered)}">${T.num(pr.done)} / ${T.num(pr.total)}</span>
     </div></div>`;
@@ -1751,7 +1751,7 @@ function bindExam() {
     if (left <= 0) { clearInterval(examTimer); submitAttempt(id, true); return; }
     const el = document.getElementById('exam-timer');
     if (el) {
-      el.textContent = fmtClock(left);
+      el.textContent = T.num(fmtClock(left));
       el.classList.toggle('warn', left <= 300e3 && left > 60e3);
       el.classList.toggle('danger', left <= 60e3);
     }
