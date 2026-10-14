@@ -117,6 +117,7 @@ const RECORD_SHAPES = {
     ...x, title: str(x.title, 300), studentId: optStr(x.studentId), startedAt: num(x.startedAt), endsAt: num(x.endsAt) || num(x.startedAt),
     submittedAt: num(x.submittedAt) || null, auto: !!x.auto, status: oneOf(x.status, ['running', 'submitted', 'marked'], 'submitted'),
     answers: isObj(x.answers) ? x.answers : {}, marks: isObj(x.marks) ? x.marks : {}, aiMarks: isObj(x.aiMarks) ? x.aiMarks : {},
+    flags: Array.isArray(x.flags) ? x.flags.filter(f => typeof f === 'string') : [],
   },
 };
 

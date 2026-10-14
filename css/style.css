@@ -287,28 +287,52 @@ details.sent pre { white-space: pre-wrap; background: var(--card2); padding: 10p
 .ai-check { margin-top: 4px; }
 
 /* ── Exam mode ─────────────────────────────────── */
-body.exam-mode { padding-top: 0; padding-bottom: 0; }
+body.exam-mode { padding-top: 0; padding-bottom: 150px; }
 body.exam-mode #topbar { display: none; }
-.exam-bar {
-  position: sticky; top: 0; z-index: 40;
-  display: flex; align-items: center; gap: 12px;
-  margin: -22px -20px 16px; padding: 10px 20px;
-  background: rgba(15, 17, 21, 0.96); backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
-}
-@media (max-width: 760px) { .exam-bar { margin: -16px -14px 14px; padding: 8px 14px; } }
-.exam-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.exam-timer { font: 700 1.35rem/1 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--card2); }
-.exam-timer.warn { color: var(--yellow); background: var(--yellow-soft); }
-.exam-timer.danger { color: var(--red); background: var(--red-soft); animation: exam-pulse 1s ease-in-out infinite; }
+.exam-head { text-align: center; margin: 6px 0 24px; overflow-wrap: anywhere; }
+.exam-head h1 { font-size: 1.35rem; }
+.exam-time { margin-top: 8px; font-size: 0.9rem; opacity: 0.85; }
+.exam-sec { margin-bottom: 10px; }
+.exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: rgba(15, 17, 21, 0.96); border-top: 1px solid var(--border); }
+.exam-foot-in { max-width: 880px; margin: 0 auto; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 12px; border-radius: 10px; background: #0b6b3a; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.28); color: #fff; }
+.exam-submit { flex: 1; align-self: stretch; background: none; border: 0; border-radius: 8px; color: #fff; font-weight: 700; font-size: 1.05rem; cursor: pointer; }
+.exam-submit:hover { background: rgba(255, 255, 255, 0.08); }
+.exam-submit:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+.exam-timer, .exam-count { min-width: 70px; font: 700 0.95rem/1 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.exam-timer { padding: 6px 8px; border-radius: 6px; }
+.exam-count { text-align: right; font-family: inherit; }
+.exam-timer.warn { color: #1d1500; background: var(--yellow); }
+.exam-timer.danger { color: #fff; background: var(--red); animation: exam-pulse 1s ease-in-out infinite; }
 @keyframes exam-pulse { 50% { opacity: 0.55; } }
-.exam-q { margin-bottom: 12px; }
-.exam-qn { margin-bottom: 6px; }
+.exam-listbtn { position: fixed; right: 16px; bottom: 88px; z-index: 41; display: flex; align-items: center; gap: 8px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--text); font-weight: 600; font-size: 0.9rem; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+.exam-listbtn:hover { background: var(--card2); }
+.exam-qtools { display: flex; justify-content: flex-end; margin-top: 2px; }
+.exam-bm { flex: none; width: 36px; height: 36px; display: grid; place-items: center; background: none; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer; }
+.exam-bm:hover { color: var(--text); background: var(--card2); }
+.exam-bm.on { color: var(--yellow); }
+.exam-bm.on svg { fill: currentColor; }
+.exam-qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 8px; }
+.exam-qnum { position: relative; height: 44px; border: 1px solid var(--border); border-radius: 9px; background: var(--card2); font-weight: 600; cursor: pointer; }
+.exam-qnum.done { background: #0b6b3a; border-color: #0b6b3a; color: #fff; }
+.exam-qnum.part { border-color: #3ecf8e; }
+.exam-qnum .flag { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
+.exam-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 0.85rem; color: var(--muted); }
+.exam-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.exam-legend .sw { width: 12px; height: 12px; border: 1px solid var(--border); border-radius: 3px; background: var(--card2); }
+.exam-legend .sw.done { background: #0b6b3a; border-color: #0b6b3a; }
+.exam-legend .sw.part { border-color: #3ecf8e; }
+.exam-legend .sw.flagged { border: 0; border-radius: 50%; width: 8px; height: 8px; background: var(--yellow); }
+.exam-q { margin-bottom: 16px; padding: 20px; scroll-margin-top: 16px; }
+.exam-qn { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -6px 0 6px; }
 .exam-stim { background: var(--card2); border-radius: var(--radius-sm); padding: 10px 12px; margin: 6px 0 10px; }
-.exam-opts { display: grid; gap: 8px; margin-top: 10px; }
-.exam-opt { position: relative; display: flex; gap: 10px; align-items: flex-start; min-height: 44px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.exam-opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+@media (max-width: 480px) { .exam-opts { grid-template-columns: 1fr; } }
+.exam-qgroup { margin: 14px 0 8px; font-size: 0.9rem; color: var(--muted); }
+.exam-qgroup:first-child { margin-top: 0; }
+.exam-opt { position: relative; display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
 .exam-opt input { position: absolute; opacity: 0; pointer-events: none; }
-.exam-opt .doc { min-width: 0; padding-top: 2px; }
+.exam-opt .doc { min-width: 0; }
+.exam-opt:hover { background: var(--card2); }
 .exam-opt .doc p { margin: 0; }
 .exam-ol { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-weight: 600; font-size: 0.9rem; }
 .exam-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
@@ -323,3 +347,4 @@ body.exam-mode #topbar { display: none; }
 .mark-in input { width: 84px; }
 .exam-done { text-align: center; max-width: 520px; margin: 40px auto; }
 .exam-big { font-size: 1.6rem; font-weight: 700; margin: 14px 0; }
+body.exam-mode #toasts { bottom: 150px; }
