@@ -98,7 +98,7 @@ async function fetchModelList(provider) {
     ids = data.map(m => String(m.id)).filter(id => !/whisper|tts|guard|safety|embed|playai|orpheus|distil|coder|-code\b|code:/.test(id));
   }
   const list = rankModels(provider, ids);
-  if (!list.length) throw new Error('No usable text models were found for this provider.');
+  if (!list.length) throw new Error('No usable text models were found for this provider. Press \"Refresh list\" again later, or choose another provider.');
   const cache = readModelCache();
   const now = Date.now();
   const blocked = Object.fromEntries(Object.entries((cache[provider] && cache[provider].blocked) || {}).filter(([, until]) => until > now));
