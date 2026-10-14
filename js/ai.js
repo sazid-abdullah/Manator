@@ -5,35 +5,134 @@ const AI_PROVIDERS = {
     needsKey: true,
     keyUrl: 'https://aistudio.google.com/apikey',
     note: 'Free tier with a Google account. Best all-round choice, handles Bangla well.',
-    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'],
+    fallback: 'gemini-flash-latest',
   },
   groq: {
     name: 'Groq',
     needsKey: true,
     keyUrl: 'https://console.groq.com/keys',
     note: 'Free tier, very fast open models.',
-    models: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
+    fallback: 'llama-3.3-70b-versatile',
   },
   openrouter: {
     name: 'OpenRouter',
     needsKey: true,
     keyUrl: 'https://openrouter.ai/keys',
     note: 'Many free models (names ending in ":free"). Free model list changes often.',
-    models: ['deepseek/deepseek-chat-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free'],
+    fallback: 'openrouter/free',
   },
   ollama: {
     name: 'Ollama (local, offline)',
     needsKey: false,
     keyUrl: 'https://ollama.com/download',
     note: 'Runs on your own computer, no key or internet needed. Start Ollama with OLLAMA_ORIGINS={origin} so this app (and only this app) can reach it. Avoid OLLAMA_ORIGINS=*, which lets any website use it.',
-    models: ['llama3.2', 'qwen2.5', 'gemma3'],
+    fallback: '',
   },
 };
 if (!(db.ai.provider in AI_PROVIDERS)) db.ai.provider = 'gemini';
 
+// Old versions saved their built-in default model name even when the user never picked one.
+// Those names get retired, so treat them as "Auto".
+const OLD_DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b',
+  'llama-3.1-8b-instant', 'deepseek/deepseek-chat-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free', 'llama3.2', 'qwen2.5', 'gemma3'];
+for (const [p, m] of Object.entries(db.ai.models)) if (OLD_DEFAULT_MODELS.includes(m)) db.ai.models[p] = '';
+
+// ── Model discovery ──────────────────────────────────────────
+// Free models are renamed and retired often, so the list comes from the provider (with the
+// user's key) and is cached per browser. "Auto" (empty choice) uses the best-ranked model and
+// moves to the next one when a model is retired (404) or out of free quota (429).
+const MODEL_CACHE_KEY = 'manator_models';
+const MODEL_CACHE_MS = 24 * 3600e3;
+let aiLastModel = '';
+
+function readModelCache() {
+  try { const c = JSON.parse(localStorage.getItem(MODEL_CACHE_KEY)); return c && typeof c === 'object' ? c : {}; } catch (e) { return {}; }
+}
+function writeModelCache(c) { try { localStorage.setItem(MODEL_CACHE_KEY, JSON.stringify(c)); } catch (e) { /* cache only */ } }
+function cachedModels(provider) {
+  const c = readModelCache()[provider];
+  return c && Array.isArray(c.list) ? c : null;
+}
+
+function modelScore(provider, id) {
+  const s = id.toLowerCase();
+  const unstable = /preview|exp|beta/.test(s) ? 0 : 1;
+  const ver = Number((s.match(/(\d+(?:\.\d+)?)/) || [])[1]) || 0;
+  const size = Math.max(0, ...[...s.matchAll(/(\d+(?:\.\d+)?)b\b/g)].map(m => Number(m[1])), /kimi-k2|deepseek/.test(s) ? 600 : 0);
+  const small = /lite|nano|mini|small|tiny|lightning|-xs|instant|\bflash-8b/.test(s) ? 0 : 1;
+  if (provider === 'gemini') {
+    const tier = /lite|nano|8b/.test(s) ? 1 : /pro/.test(s) ? 3 : /flash/.test(s) ? 2 : 0;
+    return [tier, unstable, ver];
+  }
+  return [s === 'openrouter/free' ? 0 : 1, small, unstable, size];
+}
+function rankModels(provider, ids) {
+  const cmp = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+  return [...new Set(ids)].sort((x, y) => cmp(modelScore(provider, x), modelScore(provider, y)) || x.localeCompare(y));
+}
+
+async function fetchModelList(provider) {
+  provider = provider || db.ai.provider;
+  const key = (db.ai.keys[provider] || '').trim();
+  let ids;
+  if (provider === 'gemini') {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key } });
+    if (!res.ok) throw await readError(res);
+    const d = await res.json();
+    ids = (d.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => String(m.name || '').replace(/^models\//, ''))
+      .filter(id => /^gemini-/.test(id) && !/embed|tts|image|live|audio|native|vision|computer-use|robotics|learnlm/.test(id));
+  } else {
+    const urls = { groq: 'https://api.groq.com/openai/v1/models', openrouter: 'https://openrouter.ai/api/v1/models', ollama: 'http://localhost:11434/v1/models' };
+    const res = await fetch(urls[provider], { headers: key ? { Authorization: `Bearer ${key}` } : {} });
+    if (!res.ok) throw await readError(res);
+    let data = (await res.json()).data || [];
+    if (provider === 'openrouter') {
+      data = data.filter(m => {
+        const pr = m.pricing || {};
+        const out = (m.architecture && m.architecture.output_modalities) || ['text'];
+        return (String(m.id).endsWith(':free') || (Number(pr.prompt) === 0 && Number(pr.completion) === 0)) && out.length === 1 && out[0] === 'text';
+      });
+    }
+    if (provider === 'groq') data = data.filter(m => m.active !== false);
+    ids = data.map(m => String(m.id)).filter(id => !/whisper|tts|guard|safety|embed|playai|orpheus|distil|coder|-code\b|code:/.test(id));
+  }
+  const list = rankModels(provider, ids);
+  if (!list.length) throw new Error('No usable text models were found for this provider. Press \"Refresh list\" again later, or choose another provider.');
+  const cache = readModelCache();
+  const now = Date.now();
+  const blocked = Object.fromEntries(Object.entries((cache[provider] && cache[provider].blocked) || {}).filter(([, until]) => until > now));
+  cache[provider] = { list, at: now, blocked };
+  writeModelCache(cache);
+  return list;
+}
+
+function blockModel(provider, model, ms) {
+  const cache = readModelCache();
+  if (!cache[provider]) cache[provider] = { list: [], at: 0, blocked: {} };
+  cache[provider].blocked = { ...(cache[provider].blocked || {}), [model]: Date.now() + ms };
+  writeModelCache(cache);
+}
+
+function chosenModel(provider) { return String((db.ai.models && db.ai.models[provider]) || '').trim(); }
+
+function autoModels(provider) {
+  const c = cachedModels(provider);
+  const list = c ? c.list : [];
+  const blocked = (c && c.blocked) || {};
+  const now = Date.now();
+  const ok = list.filter(id => !(blocked[id] > now));
+  const fb = AI_PROVIDERS[provider].fallback;
+  return ok.length ? ok : fb && !(blocked[fb] > now) ? [fb] : [];
+}
+
 function aiModel(provider) {
   provider = provider || db.ai.provider;
-  return (db.ai.models && db.ai.models[provider]) || AI_PROVIDERS[provider].models[0];
+  return chosenModel(provider) || autoModels(provider)[0] || '';
+}
+
+function isModelGone(err) {
+  return err.status === 404 || (err.status === 400 && /model/i.test(err.message) && /not found|decommission|no longer|deprecat|not supported|does not exist|invalid model/i.test(err.message));
 }
 
 function aiReady() {
@@ -47,16 +146,48 @@ async function readError(res) {
   try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error)) || text; } catch (e) { /* plain text */ }
   if (res.status === 401 || res.status === 403) msg = 'The API key was rejected. Check it in Settings. ' + msg;
   if (res.status === 429) msg = 'Free-tier limit reached. Wait a minute or switch model/provider in Settings. ' + msg;
-  return new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
+  const err = new Error(`${res.status}: ${String(msg).slice(0, 300)}`);
+  err.status = res.status;
+  return err;
 }
 
 async function callAI(system, user, opts) {
-  opts = opts || {};
   const provider = db.ai.provider;
-  const model = aiModel(provider);
+  const c = cachedModels(provider);
+  if (!c || Date.now() - c.at > MODEL_CACHE_MS) await fetchModelList(provider).catch(() => {});
+  let refreshed = false;
+  const tried = [];
+  for (;;) {
+    const model = aiModel(provider);
+    if (!model) throw new Error('No AI model is available. Open Settings → AI and press "Refresh list".');
+    try {
+      const text = await callModel(provider, model, system, user, opts);
+      aiLastModel = model;
+      return text;
+    } catch (err) {
+      const gone = isModelGone(err);
+      const explicit = chosenModel(provider) === model;
+      if (!(gone || err.status === 429) || (explicit && !gone) || tried.length >= 4) throw err;
+      tried.push(model);
+      blockModel(provider, model, gone ? 30 * 86400e3 : 3600e3);
+      if (gone && !refreshed) { refreshed = true; await fetchModelList(provider).catch(() => {}); blockModel(provider, model, 30 * 86400e3); }
+      if (explicit) { db.ai.models[provider] = ''; save(); }
+      const next = aiModel(provider);
+      if (!next || tried.includes(next)) throw err;
+      if (typeof toast === 'function') toast(`${model} ${gone ? 'is no longer available' : 'hit its free limit'}, using ${next} instead.`);
+    }
+  }
+}
+
+async function callModel(provider, model, system, user, opts) {
+  opts = opts || {};
   const key = (db.ai.keys[provider] || '').trim();
   const temperature = opts.temperature == null ? 0.6 : opts.temperature;
-  const maxTokens = opts.maxTokens || 8192;
+  // Newer Gemini models "think" before answering and that counts against the output limit.
+  const geminiMax = /gemini-(1\.|2\.0)/.test(model) ? 8192 : 32768;
+  const maxTokens = provider === 'gemini' ? Math.max(opts.maxTokens || 0, geminiMax) : opts.maxTokens || 8192;
+  const files = opts.files || [];
+  if (files.length && provider !== 'gemini') throw new Error('Only Google Gemini can read attached PDFs and photos.');
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
 
   if (provider === 'gemini') {
@@ -66,8 +197,8 @@ async function callAI(system, user, opts) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature, maxOutputTokens: maxTokens },
+        contents: [{ role: 'user', parts: [...files.map(x => ({ inlineData: { mimeType: x.mimeType, data: x.data } })), { text: user }] }],
+        generationConfig: { temperature, maxOutputTokens: maxTokens, ...(opts.json ? { responseMimeType: 'application/json' } : {}) },
       }),
     });
     if (!res.ok) throw await readError(res);
@@ -98,11 +229,66 @@ async function callAI(system, user, opts) {
   return text;
 }
 
-const AI_SYSTEM = `You are an experienced private tutor and teacher-trainer. You write practical, classroom-ready material for one-to-one or small-group home tuition.
+const AI_SYSTEM = `You are an experienced private tutor, teacher-trainer and board-exam paper setter. You write practical, classroom-ready material for one-to-one or small-group home tuition, mostly for students in Bangladesh (NCTB curriculum, SSC/HSC boards, English version and English medium).
 Write in clean Markdown (headings, numbered lists, bold, and pipe tables where useful). No preamble or closing chit-chat: output only the document.
-Match the student's grade level and the named curriculum/board. Be accurate; never invent facts. When writing in Bangla, use correct Bangla script throughout.`;
+Match the student's class level and the named curriculum/board. Accuracy matters more than length: solve every question yourself before writing its answer, and if you are not sure an answer is correct, replace the question with one you are sure about. Never invent textbook-specific details (page numbers, exercise numbers, named examples from a book) unless source material is provided.
+When writing in Bangla, use correct, natural standard Bangla (প্রমিত বাংলা) in Bangla script throughout, with the subject's usual Bangla textbook terms; keep formulas, units and symbols in standard notation.`;
 
-function lessonPlanPrompt(f) {
+function cqStyle(f) {
+  if (f.cqStyle === '3part' || f.cqStyle === '4part') return f.cqStyle;
+  return /math|গণিত/i.test(f.subject || '') ? '3part' : '4part';
+}
+
+function examMarks(f) {
+  const fmt = f.format || 'custom';
+  if (fmt === 'custom') return Number(f.marks) || 50;
+  return (fmt !== 'mcq' ? (Number(f.cqAnswer) || 0) * 10 : 0) + (fmt !== 'cq' ? (Number(f.mcqCount) || 0) : 0);
+}
+
+function boardRules(f) {
+  const fmt = f.format || 'custom';
+  if (fmt === 'custom') return '';
+  const bn = /bangla/i.test(f.language || '');
+  const opt = bn ? '(ক) (খ) (গ) (ঘ)' : '(a) (b) (c) (d)';
+  const part = bn ? ['ক', 'খ', 'গ', 'ঘ'] : ['a', 'b', 'c', 'd'];
+  const out = [];
+  if (fmt !== 'mcq') {
+    const n = Number(f.cqCount) || 8, a = Math.min(Number(f.cqAnswer) || n, n);
+    out.push(`**Creative questions (সৃজনশীল প্রশ্ন), Bangladesh SSC/HSC board pattern:**
+- Write exactly ${n} creative questions; the instruction says the student answers any ${a}. Each is worth 10 marks.
+- Each starts with an original stimulus (উদ্দীপক): a new, short (3–6 sentence) situation, passage, experiment, data table or diagram description linked to the topic. Do not copy it from the textbook and do not give away the answers in it.
+${cqStyle(f) === '3part'
+    ? `- Then three parts, increasing in difficulty, all based on the stimulus: ${part[0]}. [2], ${part[1]}. [4], ${part[2]}. [4] (mathematics pattern).`
+    : `- Then four parts: ${part[0]}. knowledge (জ্ঞানমূলক) [1] – recall a definition, fact or term; ${part[1]}. comprehension (অনুধাবনমূলক) [2] – explain why/how; ${part[2]}. application (প্রয়োগমূলক) [3] – apply the concept to the stimulus; ${part[3]}. higher ability (উচ্চতর দক্ষতা) [4] – analyse, compare or evaluate using the stimulus.
+- ${part[2]} and ${part[3]} must not be answerable without the stimulus; ${part[0]} and ${part[1]} test core concepts of the same topic.`}
+- Every creative question covers a different concept or sub-topic; no two stimuli are alike.`);
+  }
+  if (fmt !== 'cq') {
+    const m = Number(f.mcqCount) || 25;
+    out.push(`**Multiple choice (বহুনির্বাচনি), board pattern:** exactly ${m} questions, 1 mark each.
+- Four options ${opt}, exactly one correct. Wrong options must be plausible (typical student mistakes) and similar in length. No "all of the above" / "none of the above".
+- Mix the board types: about 60% simple (সাধারণ বহুনির্বাচনি); about 25% multiple-completion (বহুপদী সমাপ্তিসূচক): three statements i, ii, iii followed by options "i ও ii", "i ও iii", "ii ও iii", "i, ii ও iii" (in English: "i and ii", …); about 15% situation-based sets (অভিন্ন তথ্যভিত্তিক): a short shared passage or figure followed by 2–3 questions.
+- Spread the correct option letters roughly evenly.
+- Format each MCQ as a numbered line with the question, then each option on its own line starting with its label, e.g.
+  1. Question text
+     ${opt.split(' ')[0]} first option`);
+  }
+  out.push(`**Answer key layout:** ${fmt !== 'cq' ? 'MCQ answers as a table: No. | Answer | One-line reason. ' : ''}${fmt !== 'mcq' ? 'For each creative question give a model answer for every part, with the marking points that earn each mark.' : ''}`);
+  return out.join('\n\n');
+}
+
+// src = { fileNames: [...], texts: [{ name, text }], mode: 'style' | 'only' }
+function sourcePrompt(src) {
+  if (!src || (!src.fileNames.length && !src.texts.length)) return '';
+  const what = src.mode === 'only'
+    ? `It is the textbook chapter / notes to teach from. Use only the facts, definitions, examples, terms and methods in it. If something you need is not in it, leave it out instead of guessing.`
+    : `It is a past paper or sample paper. First study its format, question types, mark split, topic coverage, difficulty and wording. Then write NEW questions in the same style and at the same level. Do not copy its questions; changing only names or numbers is not enough – change the situation or the angle.`;
+  const files = src.fileNames.length ? `\nAttached file(s): ${src.fileNames.join(', ')}.` : '';
+  const texts = src.texts.map(t => `\n<<<SOURCE: ${t.name}\n${t.text}\nSOURCE>>>`).join('\n');
+  return `\n## Source material from the tutor\n${what}${files}${texts}\n`;
+}
+
+function lessonPlanPrompt(f, src) {
   return `Create a lesson plan for one tuition session.
 
 - Grade/Class: ${f.grade || 'not specified'}
@@ -112,41 +298,50 @@ function lessonPlanPrompt(f) {
 - Curriculum/Board: ${f.curriculum || 'not specified'}
 - Student level: ${f.level || 'average'}
 - Language: ${f.language || 'English'}
-${f.recent ? `- Recently covered with this student: ${f.recent}\n` : ''}${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
+${f.recent ? `- Recently covered with this student: ${f.recent}\n` : ''}${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+Teach it the way a strong home tutor does: start from what the student already knows, explain with simple everyday examples (from life in Bangladesh where they help), then build up to exam level. Pitch everything at the stated class and student level.
+
 Include these sections:
 1. **Learning objectives** (3–5, measurable)
-2. **Prior knowledge check** (2–3 quick questions)
+2. **Prior knowledge check** (2–3 quick questions, with expected answers)
 3. **Timeline** – a table with columns: Time (min) | Activity | What the tutor does | What the student does. Times must add up to ${f.duration || 60} minutes.
-4. **Key explanations & worked examples** (with full solutions)
+4. **Key explanations & worked examples** – the actual explanation the tutor will give (not just headings), key definitions/formulas, and 2–4 fully worked examples from easy to exam level.
 5. **Practice questions** (5–8, increasing difficulty, answers at the end of this section)
-6. **Common mistakes to watch for**
-7. **Homework** (short and specific)
-8. **Quick check for next session** (3 recap questions)`;
+6. **Common mistakes and misconceptions** – and how to correct each one
+7. **If the student struggles / finishes early** – one easier step and one challenge
+8. **How this topic comes in exams** – for SSC/HSC/NCTB-type curricula: one creative question (stimulus with parts) and three board-style MCQs with answers; for other curricula, typical exam questions with answers
+9. **Homework** (short and specific)
+10. **Quick check for next session** (3 recap questions)`;
 }
 
-function examPrompt(f) {
-  const types = (f.types && f.types.length ? f.types : ['Multiple choice', 'Short answer']).join(', ');
+function examPrompt(f, src) {
+  const fmt = f.format || 'custom';
+  const marks = examMarks(f);
+  const types = fmt === 'custom' ? (f.types && f.types.length ? f.types : ['Multiple choice', 'Short answer']).join(', ')
+    : { cq: 'Creative questions (CQ)', mcq: 'Multiple choice (MCQ)', board: 'MCQ section and creative question (CQ) section' }[fmt];
   return `Create an exam paper.
 
 - Grade/Class: ${f.grade || 'not specified'}
 - Subject: ${f.subject}
-- Topics covered: ${f.topics}
+- Topics covered: ${f.topics || (src && (src.fileNames.length || src.texts.length) ? 'the same topics as the source material' : 'not specified')}
 - Curriculum/Board: ${f.curriculum || 'not specified'}
-- Total marks: ${f.marks || 50}
+- Total marks: ${marks}
 - Time allowed: ${f.duration || 60} minutes
 - Difficulty: ${f.difficulty || 'mixed (easy → hard)'}
 - Question types: ${types}
 - Language: ${f.language || 'English'}
-${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
+${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+${boardRules(f)}
+
 Rules:
 - Start with a header: exam title, subject, class, time, total marks, and a line for student name and date.
 - Group questions into sections by type, with clear instructions and marks per question shown like **[2]**.
-- The marks of all questions MUST add up to exactly ${f.marks || 50}. Show a section-wise marks summary.
-- Only test the listed topics, at the stated grade level.
-${f.answerKey ? '- After the paper, add a line containing only "---" and then a section titled "## Answer Key" with correct answers, brief working, and a marking guide.' : '- Do not include answers.'}`;
+- The marks of all questions the student must answer MUST add up to exactly ${marks}. Show a section-wise marks summary.
+- Only test the listed topics, at the stated class level. No two questions test the same thing.
+${f.answerKey ? '- After the paper, add a line containing only "---" and then a section titled "## Answer Key" with correct answers, brief working, and a marking guide. Check every answer before writing it.' : '- Do not include answers.'}`;
 }
 
-function worksheetPrompt(f) {
+function worksheetPrompt(f, src) {
   return `Create a practice worksheet.
 
 - Grade/Class: ${f.grade || 'not specified'}
@@ -155,11 +350,111 @@ function worksheetPrompt(f) {
 - Number of questions: ${f.count || 15}
 - Difficulty: ${f.difficulty || 'mixed (easy → hard)'}
 - Language: ${f.language || 'English'}
-${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}
-Start with a short "Remember" box of key formulas/rules, then numbered questions grouped from easy to hard. After a line containing only "---", add "## Answers" with brief solutions.`;
+${f.notes ? `- Tutor's notes: ${f.notes}\n` : ''}${sourcePrompt(src)}
+Start with a short "Remember" box of key formulas/rules, then numbered questions grouped from easy to hard, covering different sub-skills of the topic (no near-duplicates). After a line containing only "---", add "## Answers" with brief solutions. Check every answer before writing it.`;
+}
+
+const CHECK_SYSTEM = `You are a strict, experienced exam moderator and board examiner. You check papers that someone else wrote. You are careful and honest: you report only real problems, and you never rewrite the paper.`;
+
+function checkPrompt(tool, f, content, src) {
+  const req = tool === 'exam'
+    ? `Requirements it must meet: class ${f.grade || 'not specified'}, subject ${f.subject}, total marks ${examMarks(f)}, language ${f.language || 'English'}.\n${boardRules(f)}`
+    : `Requirements: class ${f.grade || 'not specified'}, subject ${f.subject}, ${f.count || 15} questions, language ${f.language || 'English'}.`;
+  return `Check this ${tool === 'exam' ? 'exam paper' : 'worksheet'} before it is given to a student.
+
+${req}
+${sourcePrompt(src)}
+Do this:
+1. Solve every question yourself, independently, then compare with the answer key.
+2. Look for: wrong answers in the key; questions that are wrong, ambiguous or unanswerable; MCQs with no correct option or more than one; creative-question parts that don't match their level or marks or don't use the stimulus; marks that don't add up to the total; the wrong number of questions; duplicate questions; content off the topic or wrong for the class level; factual errors${src && (src.fileNames.length || src.texts.length) ? ' or facts not supported by the source material' : ''}; poor language, spelling or Bangla grammar.
+
+Reply in English. The first line must be exactly "VERDICT: OK" or "VERDICT: PROBLEMS".
+If there are problems, then give a numbered list. Each item: **Q<number>** – what is wrong – how to fix it (including the correct answer). Nothing else.
+
+<<<PAPER
+${content}
+PAPER>>>`;
+}
+
+function parseCheck(text) {
+  const m = String(text || '').match(/VERDICT:\s*(OK|PROBLEMS)/i);
+  const report = String(text || '').replace(/^[\s\S]*?VERDICT:\s*(OK|PROBLEMS)\s*/i, '').trim();
+  return { ok: !!m && m[1].toUpperCase() === 'OK' && !/\*\*Q\d/.test(report), report: m ? report : String(text || '').trim() };
+}
+
+function revisePrompt(tool, f, content, instruction, src) {
+  return `Below is a ${tool === 'plan' ? 'lesson plan' : tool === 'exam' ? 'exam paper' : 'worksheet'} you wrote. Revise it.
+
+Instruction from the tutor:
+${instruction}
+
+Rules:
+- Change only what the instruction needs. Keep every other question, its numbering and its wording exactly the same.
+- Keep the answer key in step with any question you change.${tool === 'exam' ? ` Keep the total marks at ${examMarks(f)}.` : ''}
+${tool === 'exam' ? boardRules(f) : ''}
+${sourcePrompt(src)}
+Output the complete revised document (including any answer key) and nothing else.
+
+<<<DOCUMENT
+${content}
+DOCUMENT>>>`;
+}
+
+// Strips a ```markdown fence some models wrap the whole document in.
+function cleanDoc(text) {
+  const t = String(text || '').trim();
+  const m = t.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return m ? m[1].trim() : t;
 }
 
 // Minimal Markdown → HTML. Input is escaped first, so AI output cannot inject markup.
+// ── Exam mode: paper → structured exam, and written-answer marking ──
+const EXAM_JSON_SYSTEM = `You convert exam papers into JSON for an on-screen exam app. Output only valid JSON: no Markdown fences, no comments, no text before or after.`;
+
+function examJsonPrompt(content) {
+  return `Convert this exam paper into JSON with exactly this shape:
+{"title": "short title", "duration": minutes printed on the paper (0 if none), "instructions": "general instructions printed on the paper, or empty", "cqChoose": how many creative questions the student must answer (0 if all),
+ "questions": [
+  {"type": "mcq", "n": "1", "stimulus": "", "text": "the question", "options": ["…", "…", "…", "…"], "answer": 0, "marks": 1},
+  {"type": "cq", "n": "1", "stimulus": "the stimulus / passage / data (উদ্দীপক)", "parts": [{"label": "ক", "text": "the part", "marks": 1, "answer": "model answer"}]},
+  {"type": "written", "n": "1", "text": "the question", "marks": 2, "answer": "model answer"}
+ ]}
+Rules:
+- Keep every question in the paper, in the same order and language, with its wording, numbers and symbols unchanged. Do not add, drop or merge questions.
+- "answer" for an MCQ is the 0-based index of the correct option (0 = first option).
+- MCQ options: the option text only, without labels like (ক), (a) or A. For multiple-completion MCQs, put the i/ii/iii statements in "text" (with line breaks) and the combinations as the options.
+- MCQs that share a stimulus or passage: copy it into "stimulus" of each of those questions.
+- Short-answer, broad, fill-in-the-blank, true/false, matching and numerical questions are "written".
+- Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself.
+- Marks as printed. If not printed: MCQ 1, others your best estimate.
+- Keep Markdown (tables, bold, line breaks as \\n) inside strings.
+
+<<<PAPER
+${content}
+PAPER>>>`;
+}
+
+const MARK_SYSTEM = `You are a fair, experienced board examiner marking a student's written answers. Mark the way a board examiner would: give credit for correct ideas even when the wording is different from the model answer, give partial marks for partly correct work, and follow level-wise marking for creative questions. Output only valid JSON.`;
+
+function markPrompt(items) {
+  return `Mark each student answer below out of its "max" marks. Marks can be in steps of 0.5.
+Reply with JSON: {"marks": [{"id": "question id", "part": part number, "marks": number, "reason": "one short sentence in English"}]}
+
+${JSON.stringify(items, null, 1)}`;
+}
+
+function parseJSONReply(text) {
+  const t = String(text || '');
+  const a = t.indexOf('{');
+  const b = t.lastIndexOf('}');
+  try {
+    if (a < 0 || b < a) throw new Error();
+    return JSON.parse(t.slice(a, b + 1));
+  } catch (e) {
+    throw new Error("The AI's reply wasn't in the expected format. Please try again.");
+  }
+}
+
 function renderMarkdown(md) {
   const lines = esc(md || '').replace(/\r/g, '').split('\n');
   const out = [];

@@ -279,3 +279,47 @@ details.sent summary { cursor: pointer; color: var(--muted); }
 details.sent pre { white-space: pre-wrap; background: var(--card2); padding: 10px 12px; border-radius: 10px; max-height: 280px; overflow: auto; font-size: 0.8rem; margin: 8px 0 0; }
 .money-chips { margin: 8px 0; }
 .money-chips .btn { white-space: normal; text-align: left; height: auto; }
+[hidden] { display: none !important; }
+.src-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 0.85rem; overflow-wrap: anywhere; }
+.src-x { border: none; background: none; color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.revise-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+.revise-row input { flex: 1 1 220px; min-width: 0; }
+.ai-check { margin-top: 4px; }
+
+/* ── Exam mode ─────────────────────────────────── */
+body.exam-mode { padding-top: 0; padding-bottom: 0; }
+body.exam-mode #topbar { display: none; }
+.exam-bar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 12px;
+  margin: -22px -20px 16px; padding: 10px 20px;
+  background: rgba(15, 17, 21, 0.96); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+@media (max-width: 760px) { .exam-bar { margin: -16px -14px 14px; padding: 8px 14px; } }
+.exam-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.exam-timer { font: 700 1.35rem/1 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--card2); }
+.exam-timer.warn { color: var(--yellow); background: var(--yellow-soft); }
+.exam-timer.danger { color: var(--red); background: var(--red-soft); animation: exam-pulse 1s ease-in-out infinite; }
+@keyframes exam-pulse { 50% { opacity: 0.55; } }
+.exam-q { margin-bottom: 12px; }
+.exam-qn { margin-bottom: 6px; }
+.exam-stim { background: var(--card2); border-radius: var(--radius-sm); padding: 10px 12px; margin: 6px 0 10px; }
+.exam-opts { display: grid; gap: 8px; margin-top: 10px; }
+.exam-opt { position: relative; display: flex; gap: 10px; align-items: flex-start; min-height: 44px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.exam-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.exam-opt .doc { min-width: 0; padding-top: 2px; }
+.exam-opt .doc p { margin: 0; }
+.exam-ol { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-weight: 600; font-size: 0.9rem; }
+.exam-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.exam-opt:has(input:checked) .exam-ol { background: var(--accent); border-color: var(--accent); color: #fff; }
+.exam-opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.exam-part { margin-top: 12px; }
+.exam-part textarea { width: 100%; margin-top: 6px; }
+.exam-ans { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card2); border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0; }
+.exam-prev-opts { list-style: none; margin: 4px 0 0 4px; }
+.mark-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 6px; }
+.mark-in { display: inline-flex; align-items: center; gap: 6px; }
+.mark-in input { width: 84px; }
+.exam-done { text-align: center; max-width: 520px; margin: 40px auto; }
+.exam-big { font-size: 1.6rem; font-weight: 700; margin: 14px 0; }
