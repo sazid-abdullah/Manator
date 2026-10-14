@@ -64,7 +64,8 @@ function normalizeExam(x) {
     if (q.type === 'mcq') {
       const options = (Array.isArray(q.options) ? q.options : []).map(o => str(o, 4000).trim()).filter(Boolean).slice(0, 6);
       if (options.length < 2 || !str(q.text).trim()) return null;
-      return { id, n, type: 'mcq', stimulus: str(q.stimulus), text: str(q.text), options, answer: optIndex(q.answer, options.length), marks: num(q.marks) > 0 ? num(q.marks) : 1 };
+      const answer = optIndex(q.answer, options.length);
+      return { id, n, type: 'mcq', stimulus: str(q.stimulus), text: str(q.text), options, answer, guessed: answer != null && q.guessed === true, marks: num(q.marks) > 0 ? num(q.marks) : 1 };
     }
     if (q.type === 'cq') {
       const parts = (Array.isArray(q.parts) ? q.parts : []).filter(isObj)

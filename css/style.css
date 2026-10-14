@@ -342,6 +342,8 @@ body.exam-mode #topbar { display: none; }
 .exam-part textarea { width: 100%; margin-top: 6px; }
 .exam-ans { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card2); border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0; }
 .exam-prev-opts { list-style: none; margin: 4px 0 0 4px; }
+.exam-prev-opt { background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; margin: 1px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.exam-prev-opt:hover { border-color: var(--border); }
 .mark-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 6px; }
 .mark-in { display: inline-flex; align-items: center; gap: 6px; }
 .mark-in input { width: 84px; }
