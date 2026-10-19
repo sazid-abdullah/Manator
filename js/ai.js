@@ -231,10 +231,15 @@ async function callModel(provider, model, system, user, opts) {
   const headers = { 'Content-Type': 'application/json' };
   if (key) headers.Authorization = `Bearer ${key}`;
   if (provider === 'openrouter') headers['X-Title'] = 'Manator';
+  const body = { model, messages, temperature, max_tokens: maxTokens, stream: false };
+  if (opts.json) {
+    if (provider === 'ollama') body.format = 'json';
+    else body.response_format = { type: 'json_object' };
+  }
   const res = await fetch(urls[provider], {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw await readError(res);
   const data = await res.json();
