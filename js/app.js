@@ -1580,9 +1580,16 @@ function openExamSetup(doc, opts) {
           const n = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
+          const prevEx = db.exams.filter(x => x.docId === doc.id).pop();
+          const legacy = [], missed = carryFigures(prevEx, n, legacy);
+          const was = [db.exams, doc.content, doc.meta];
+          if (isFileCopy(doc)) {
+            doc.content = renumberMarks(doc.content, prevEx, n, legacy);
+            doc.meta = { ...doc.meta, markMissed: missed || undefined };
+          }
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
-          db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash, createdAt: new Date().toISOString() });
-          if (!save()) return;
+          db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: new Date().toISOString() });
+          if (!save()) { [db.exams, doc.content, doc.meta] = was; return; }
           openExamSetup(doc, opts);
         } catch (err) {
           if (!document.body.contains(btn)) return toast(`Couldn't prepare the exam: ${err.message || err}`, 'error');
@@ -1596,12 +1603,12 @@ function openExamSetup(doc, opts) {
     });
     return;
   }
-  const st = examStats(ex);
+  const st = examStats(ex), lostPics = (doc.meta?.missedFigures || 0) + (doc.meta?.markMissed || 0);
   openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
     ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
     ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
     ${st.figures ? `<div class="notice">${st.figures} picture${st.figures === 1 ? ' was' : 's were'} cut out of the paper and will show in the exam. Check ${st.figures === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
-    ${doc.meta?.missedFigures ? `<div class="notice warn">The AI found ${doc.meta.missedFigures} more picture${doc.meta.missedFigures === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${doc.meta.missedFigures === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
+    ${lostPics ? `<div class="notice warn">The AI found ${lostPics} more picture${lostPics === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${lostPics === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
     ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Manator can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
@@ -1684,7 +1691,8 @@ async function cutFigures(raw, getPage) {
   const done = new Map();
   let missed = 0;
   const cut = async f => {
-    if (!isObj(f) || !Array.isArray(f.box) || f.box.length !== 4) return '';
+    if (!isObj(f)) return '';
+    if (!Array.isArray(f.box) || f.box.length !== 4) { missed++; return ''; }
     const n = Math.max(1, Math.round(num(f.page)) || 1), key = `${n}:${f.box.join(',')}`;
     if (!done.has(key)) done.set(key, getPage(n).then(p => (p ? cropFigure(p, f.box) : '')).catch(() => ''));
     const src = await done.get(key);
@@ -1737,13 +1745,78 @@ async function readPaperToExam(file) {
   return { exam, content, skipped, missedFigures };
 }
 
+// The original file isn't kept, so the library copy marks each picture as *[Picture k]*, k numbering the
+// exam's distinct pictures in paper order. Re-reading an edited copy puts back the pictures whose markers remain.
+const PIC_MARK = /\*\[(?:Picture|চিত্র)(?: (\d+))?\]\*/g;
+const PIC_MARK_LINE = new RegExp(`\\s*${PIC_MARK.source}\\s*`, 'g');
+function figNums(ex) {
+  const m = new Map();
+  for (const type of ['mcq', 'cq', 'written']) {
+    for (const q of ex.questions) if (q.type === type) for (const f of [q.figure, ...(q.optionFigures || [])]) if (f && !m.has(f)) m.set(f, m.size + 1);
+  }
+  return m;
+}
+// Returns how many markers had no picture to put back. Fills legacy with the picture (or null) each
+// unnumbered marker got, in the order the questions read them.
+function carryFigures(prev, ex, legacy = []) {
+  const byNum = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []);
+  const old = new Map(prev ? prev.questions.map(q => [`${q.type}:${q.n}`, q]) : []);
+  const marks = t => [...String(t || '').matchAll(PIC_MARK)];
+  const clean = t => String(t || '').replace(PIC_MARK_LINE, '\n').trim();
+  let missed = 0;
+  for (const q of ex.questions) {
+    const found = [q.stimulus, q.text, ...(q.parts || []).map(p => p.text)].flatMap(marks);
+    if (found.length) {
+      const m = found.find(x => x[1]);
+      // Unnumbered markers come from copies saved before markers were numbered.
+      const f = m ? byNum.get(m[1]) : old.get(`${q.type}:${q.n}`)?.figure;
+      if (f) q.figure = f; else missed++;
+      found.forEach(x => { if (!x[1]) legacy.push(f || null); });
+      if (q.stimulus) q.stimulus = clean(q.stimulus);
+      if (q.text) q.text = clean(q.text);
+      if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
+    }
+    if (q.type !== 'mcq') continue;
+    // Unnumbered option markers fall back to the old question's picture in the same option slot.
+    const o = old.get(`${q.type}:${q.n}`);
+    const slot = i => (o && o.options.length === q.options.length && optFig(o, i)) || null;
+    const figs = q.options.map((t, i) => { const m = marks(t)[0]; return m ? (m[1] ? byNum.get(m[1]) || null : slot(i)) : undefined; });
+    if (figs.every(f => f === undefined)) continue;
+    q.options.forEach((t, i) => marks(t).forEach(x => { if (!x[1]) legacy.push(figs[i]); }));
+    missed += figs.filter(f => f === null).length;
+    q.options = q.options.map((t, i) => (figs[i] === undefined ? t : clean(t) || (figs[i] ? '' : '(picture missing)')));
+    if (figs.some(Boolean)) q.optionFigures = figs.map(f => f || '');
+  }
+  return missed;
+}
+// Rewrites the markers in a library copy to the new exam's numbering, changing nothing else. Unnumbered
+// markers before the answer key get numbers when there are as many as carryFigures read.
+function renumberMarks(content, prev, ex, legacy = []) {
+  const was = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []), now = figNums(ex);
+  const keyAt = content.search(/^## (Answer Key|উত্তরমালা)\s*$/m);
+  const body = keyAt < 0 ? content : content.slice(0, keyAt);
+  const plain = [...body.matchAll(PIC_MARK)].filter(m => !m[1]).length;
+  let i = 0;
+  return content.replace(PIC_MARK, (s, k, at) => {
+    if (!k) {
+      if (plain !== legacy.length || (keyAt >= 0 && at >= keyAt)) return s;
+      const f = legacy[i++];
+      return f && now.has(f) ? s.replace(/\]\*$/, ` ${now.get(f)}]*`) : s;
+    }
+    const f = was.get(k);
+    return f && now.has(f) ? s.replace(/ \d+\]\*$/, ` ${now.get(f)}]*`) : s.replace(/ \d+\]\*$/, ']*');
+  });
+}
+
 // Library copy written from the AI's reading of a PDF or photo; the original file isn't kept.
 const isFileCopy = doc => PAPER_FILES.test(String(doc.meta?.importedFrom || '').toLowerCase());
 
 // Library copy of a paper the AI read from a PDF or photo, with the answer key at the end.
 function examToMarkdown(ex) {
   const T = examText(ex), L = optLabels(ex), bn = L === OPT_LETTERS_BN;
-  const out = [], key = [], pic = bn ? '*[চিত্র]*' : '*[Picture]*';
+  const nums = figNums(ex), out = [], key = [];
+  const pic = f => `*[${bn ? 'চিত্র' : 'Picture'} ${nums.get(f)}]*`;
+  const optMd = (q, i) => [q.options[i], optFig(q, i) && pic(optFig(q, i))].filter(Boolean).join(' ');
   if (ex.instructions) out.push(ex.instructions);
   out.push(`*${T.time(ex.duration)}*`);
   for (const [type, title] of [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]]) {
@@ -1754,13 +1827,13 @@ function examToMarkdown(ex) {
     for (const q of qs) {
       if (type === 'mcq') {
         if (q.stimulus) out.push(q.stimulus);
-        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic] : []), q.options.map((o, i) => `- ${L[i]}. ${o || pic}`).join('\n'));
-        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer] || pic}`}`);
+        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic(q.figure)] : []), q.options.map((o, i) => `- ${L[i]}. ${optMd(q, i)}`).join('\n'));
+        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${optMd(q, q.answer)}`}`);
         continue;
       }
-      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic] : []));
+      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic(q.figure)] : []));
       qParts(q).forEach(p => {
-        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`, ...(type === 'written' && q.figure ? [pic] : []));
+        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`, ...(type === 'written' && q.figure ? [pic(q.figure)] : []));
         if (p.answer) ks.push(`- ${q.n}${type === 'cq' && p.label ? ` (${p.label})` : ''}. ${p.answer.replace(/\n+/g, ' ')}`);
       });
     }
@@ -2031,14 +2104,15 @@ function viewResult(id) {
   const mins = Math.max(1, Math.round(((at.submittedAt || at.endsAt) - at.startedAt) / 60e3));
   const mcqs = ex.questions.filter(q => q.type === 'mcq');
   const wqs = ex.questions.filter(q => q.type !== 'mcq');
-  const opt = (q, i) => `${L[i]}. ${esc(optText(q, i))}`;
+  const opt = (q, i) => `${L[i]}. ${optFig(q, i) && !q.options[i] ? '' : esc(optText(q, i))}${figHTML(optFig(q, i), 'inline')}`;
+  const legend = q => (q.optionFigures ? `<div class="exam-fig-legend">${q.options.map((o, i) => `<span>${opt(q, i)}</span>`).join('')}</div>` : '');
   const mcqRows = mcqs.map(q => {
     const a = at.answers[q.id];
     const ok = q.answer != null && a === q.answer;
     if (q.answer == null) {
       return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}
-        <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div></div>
-        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${optText(q, i)}`.slice(0, 60))}</option>`).join('')}</select></div>`;
+        <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div>${legend(q)}</div>
+        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${q.options[i] || (optFig(q, i) ? '(see picture)' : '')}`.slice(0, 60))}</option>`).join('')}</select></div>`;
     }
     const badge = q.answer == null ? '<span class="badge yellow">No key</span>' : a == null ? '<span class="badge">—</span>' : ok ? '<span class="badge green">✓</span>' : '<span class="badge red">✗</span>';
     return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}

@@ -449,7 +449,8 @@ Rules:
 - Take answers and model answers from the paper's answer key. If there is no key, or it misses a question, work out the correct answer yourself and add "guessed": true to that question.
 - Marks as printed. If not printed: MCQ 1, others your best estimate.
 - Keep model answers short: the key points or final result only, at most 2–3 sentences, so the whole paper fits in one reply.
-- Keep Markdown (tables, bold, line breaks as \\n) inside strings.${content == null ? `
+- Keep Markdown (tables, bold, line breaks as \\n) inside strings.${content != null && /\*\[(Picture|চিত্র)/.test(content) ? `
+- Keep picture markers like *[Picture 2]* exactly as written, where they appear: in the question text, the stimulus, a part, or as an option's text.` : ''}${content == null ? `
 - Pictures: if a question or its stimulus has a picture (diagram, graph, circuit, logic gate, map, geometry figure, chart, apparatus, photo), add "figure": {"page": page number starting at 1 (1 for a photo), "box": [ymin, xmin, ymax, xmax]} to that question. "box" is the picture's bounding box on that page, each value from 0 to 1000 relative to the page height and width. Box the whole picture with its labels, but not the question text or options. Questions that share one picture all get the same figure. Don't describe the picture in the text.
 - If an MCQ's options are pictures, add "optionFigures": one figure object per option, in option order (null for an option without a picture), and give such options the text "".` : `
 
