@@ -338,6 +338,12 @@ body.exam-mode #topbar { display: none; }
 .exam-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .exam-opt:has(input:checked) .exam-ol { background: var(--accent); border-color: var(--accent); color: #fff; }
 .exam-opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.exam-fig { display: block; max-width: 100%; max-height: 360px; height: auto; margin: 8px 0 10px; border-radius: var(--radius-sm); background: #fff; }
+.exam-fig.opt { max-height: 140px; margin: 4px 0; }
+.exam-fig.thumb { max-height: 80px; margin: 4px 0; }
+.exam-fig-wrap { margin: 4px 0 8px; }
+.exam-fig-wrap .exam-fig { margin-bottom: 4px; }
+.exam-prev-opts .exam-fig-del { margin: 0 0 6px 8px; }
 .exam-part { margin-top: 12px; }
 .exam-part textarea { width: 100%; margin-top: 6px; }
 .exam-ans { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card2); border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0; }
