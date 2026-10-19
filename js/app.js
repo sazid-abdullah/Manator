@@ -1584,7 +1584,8 @@ function openExamSetup(doc, opts) {
           const missed = carryFigures(prevEx, n);
           const was = [db.exams, doc.content, doc.meta];
           if (isFileCopy(doc)) {
-            doc.content = renumberMarks(doc.content, prevEx, n);
+            // Copies saved before markers were numbered are rewritten once from the new exam, numbering them.
+            doc.content = /\*\[(?:Picture|চিত্র)\]\*/.test(doc.content) ? examToMarkdown(n) : renumberMarks(doc.content, prevEx, n);
             doc.meta = { ...doc.meta, markMissed: missed || undefined };
           }
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
