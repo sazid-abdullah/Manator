@@ -342,6 +342,8 @@ body.exam-mode #topbar { display: none; }
 .exam-fig.opt { max-height: 140px; margin: 4px 0; }
 .exam-fig.thumb { max-height: 80px; margin: 4px 0; }
 .exam-fig-wrap { margin: 4px 0 8px; }
+.exam-fig.inline { display: inline-block; vertical-align: middle; max-height: 60px; max-width: 120px; margin: 2px 4px; }
+.exam-fig-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; font-size: 0.85rem; }
 .exam-fig-wrap .exam-fig { margin-bottom: 4px; }
 .exam-prev-opts .exam-fig-del { margin: 0 0 6px 8px; }
 .exam-part { margin-top: 12px; }

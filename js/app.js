@@ -1580,6 +1580,7 @@ function openExamSetup(doc, opts) {
           const n = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
+          carryFigures(db.exams.filter(x => x.docId === doc.id).pop(), n);
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
           db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash, createdAt: new Date().toISOString() });
           if (!save()) return;
@@ -1684,7 +1685,8 @@ async function cutFigures(raw, getPage) {
   const done = new Map();
   let missed = 0;
   const cut = async f => {
-    if (!isObj(f) || !Array.isArray(f.box) || f.box.length !== 4) return '';
+    if (!isObj(f)) return '';
+    if (!Array.isArray(f.box) || f.box.length !== 4) { missed++; return ''; }
     const n = Math.max(1, Math.round(num(f.page)) || 1), key = `${n}:${f.box.join(',')}`;
     if (!done.has(key)) done.set(key, getPage(n).then(p => (p ? cropFigure(p, f.box) : '')).catch(() => ''));
     const src = await done.get(key);
@@ -1735,6 +1737,31 @@ async function readPaperToExam(file) {
   const exam = normalizeExam(raw);
   if (!exam.questions.length) throw new Error('No questions were found in this paper.');
   return { exam, content, skipped, missedFigures };
+}
+
+// The original file isn't kept, so re-reading an edited library copy takes the pictures from the
+// previous exam, matching questions by type and number.
+const PIC_LINE = /\s*\*\[(Picture|চিত্র)\]\*\s*/g;
+const PIC_OPT = /^(\*?\[(picture|চিত্র)\]\*?|\(picture( missing| removed)?\))$/i;
+function carryFigures(prev, ex) {
+  if (!prev) return ex;
+  const old = new Map(prev.questions.map(q => [`${q.type}:${q.n}`, q]));
+  const clean = t => t.replace(PIC_LINE, '\n').trim();
+  for (const q of ex.questions) {
+    const o = old.get(`${q.type}:${q.n}`);
+    if (!o) continue;
+    if (o.figure && !q.figure) q.figure = o.figure;
+    if (q.type === 'mcq' && o.optionFigures && o.options.length === q.options.length) {
+      q.optionFigures = [...o.optionFigures];
+      q.options = q.options.map((t, i) => (q.optionFigures[i] && PIC_OPT.test(t.trim()) ? '' : t));
+    }
+    if (q.figure || q.optionFigures) {
+      if (q.stimulus) q.stimulus = clean(q.stimulus);
+      if (q.text) q.text = clean(q.text);
+      if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
+    }
+  }
+  return ex;
 }
 
 // Library copy written from the AI's reading of a PDF or photo; the original file isn't kept.
@@ -2031,14 +2058,15 @@ function viewResult(id) {
   const mins = Math.max(1, Math.round(((at.submittedAt || at.endsAt) - at.startedAt) / 60e3));
   const mcqs = ex.questions.filter(q => q.type === 'mcq');
   const wqs = ex.questions.filter(q => q.type !== 'mcq');
-  const opt = (q, i) => `${L[i]}. ${esc(optText(q, i))}`;
+  const opt = (q, i) => `${L[i]}. ${optFig(q, i) && !q.options[i] ? '' : esc(optText(q, i))}${figHTML(optFig(q, i), 'inline')}`;
+  const legend = q => (q.optionFigures ? `<div class="exam-fig-legend">${q.options.map((o, i) => `<span>${opt(q, i)}</span>`).join('')}</div>` : '');
   const mcqRows = mcqs.map(q => {
     const a = at.answers[q.id];
     const ok = q.answer != null && a === q.answer;
     if (q.answer == null) {
       return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}
-        <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div></div>
-        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${optText(q, i)}`.slice(0, 60))}</option>`).join('')}</select></div>`;
+        <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div>${legend(q)}</div>
+        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${q.options[i] || (optFig(q, i) ? '(see picture)' : '')}`.slice(0, 60))}</option>`).join('')}</select></div>`;
     }
     const badge = q.answer == null ? '<span class="badge yellow">No key</span>' : a == null ? '<span class="badge">—</span>' : ok ? '<span class="badge green">✓</span>' : '<span class="badge red">✗</span>';
     return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}
