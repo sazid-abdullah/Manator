@@ -1585,7 +1585,7 @@ function openExamSetup(doc, opts) {
           const was = [db.exams, doc.content, doc.meta];
           if (isFileCopy(doc)) {
             doc.content = renumberMarks(doc.content, prevEx, n);
-            doc.meta = { ...doc.meta, missedFigures: missed || undefined };
+            doc.meta = { ...doc.meta, markMissed: missed || undefined };
           }
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
           db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: new Date().toISOString() });
@@ -1603,12 +1603,12 @@ function openExamSetup(doc, opts) {
     });
     return;
   }
-  const st = examStats(ex);
+  const st = examStats(ex), lostPics = (doc.meta?.missedFigures || 0) + (doc.meta?.markMissed || 0);
   openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
     ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
     ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
     ${st.figures ? `<div class="notice">${st.figures} picture${st.figures === 1 ? ' was' : 's were'} cut out of the paper and will show in the exam. Check ${st.figures === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
-    ${doc.meta?.missedFigures ? `<div class="notice warn">The AI found ${doc.meta.missedFigures} more picture${doc.meta.missedFigures === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${doc.meta.missedFigures === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
+    ${lostPics ? `<div class="notice warn">The AI found ${lostPics} more picture${lostPics === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${lostPics === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
     ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Manator can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
@@ -1775,8 +1775,10 @@ function carryFigures(prev, ex) {
       if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
     }
     if (q.type !== 'mcq') continue;
-    // An unnumbered option marker can't say which picture it was, so it isn't guessed.
-    const figs = q.options.map(t => { const m = marks(t)[0]; return m ? (m[1] && byNum.get(m[1])) || null : undefined; });
+    // Unnumbered option markers fall back to the old question's picture in the same option slot.
+    const o = old.get(`${q.type}:${q.n}`);
+    const slot = i => (o && o.options.length === q.options.length && optFig(o, i)) || null;
+    const figs = q.options.map((t, i) => { const m = marks(t)[0]; return m ? (m[1] ? byNum.get(m[1]) || null : slot(i)) : undefined; });
     if (figs.every(f => f === undefined)) continue;
     missed += figs.filter(f => f === null).length;
     q.options = q.options.map((t, i) => (figs[i] === undefined ? t : clean(t) || (figs[i] ? '' : '(picture missing)')));
