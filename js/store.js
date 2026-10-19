@@ -52,6 +52,11 @@ function optIndex(v, n) {
   return Number.isInteger(i) && i >= 0 && i < n ? i : null;
 }
 
+// Picture cut out of an uploaded paper, kept as a data URL. Anything else is dropped.
+const FIG_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/;
+const figSrc = v => (typeof v === 'string' && v.length < 1500000 && FIG_RE.test(v) ? v : '');
+const withFig = v => { const f = figSrc(v); return f ? { figure: f } : {}; };
+
 // Structured exam used by exam mode. Bad or empty questions are dropped.
 function normalizeExam(x) {
   x = isObj(x) ? x : {};
@@ -62,19 +67,22 @@ function normalizeExam(x) {
     seen.add(id);
     const n = str(q.n, 12) || String(i + 1);
     if (q.type === 'mcq') {
-      const options = (Array.isArray(q.options) ? q.options : []).map(o => str(o, 4000).trim()).filter(Boolean).slice(0, 6);
-      if (options.length < 2 || !str(q.text).trim()) return null;
+      const figs = Array.isArray(q.optionFigures) ? q.optionFigures : [];
+      const opts = (Array.isArray(q.options) ? q.options : []).map((o, i) => ({ t: str(o, 4000).trim(), f: figSrc(figs[i]) })).filter(o => o.t || o.f).slice(0, 6);
+      if (opts.length < 2 || !str(q.text).trim()) return null;
+      const options = opts.map(o => o.t);
       const answer = optIndex(q.answer, options.length);
-      return { id, n, type: 'mcq', stimulus: str(q.stimulus), text: str(q.text), options, answer, guessed: answer != null && q.guessed === true, marks: num(q.marks) > 0 ? num(q.marks) : 1 };
+      return { id, n, type: 'mcq', stimulus: str(q.stimulus), text: str(q.text), ...withFig(q.figure), options, ...(opts.some(o => o.f) ? { optionFigures: opts.map(o => o.f) } : {}),
+        answer, guessed: answer != null && q.guessed === true, marks: num(q.marks) > 0 ? num(q.marks) : 1 };
     }
     if (q.type === 'cq') {
       const parts = (Array.isArray(q.parts) ? q.parts : []).filter(isObj)
         .map(p => ({ label: str(p.label, 12), text: str(p.text), marks: num(p.marks) > 0 ? num(p.marks) : 1, answer: str(p.answer) }))
         .filter(p => p.text.trim());
-      return parts.length ? { id, n, type: 'cq', stimulus: str(q.stimulus), parts } : null;
+      return parts.length ? { id, n, type: 'cq', stimulus: str(q.stimulus), ...withFig(q.figure), parts } : null;
     }
     if (!str(q.text).trim()) return null;
-    return { id, n, type: 'written', text: str(q.text), marks: num(q.marks) > 0 ? num(q.marks) : 1, answer: str(q.answer) };
+    return { id, n, type: 'written', text: str(q.text), ...withFig(q.figure), marks: num(q.marks) > 0 ? num(q.marks) : 1, answer: str(q.answer) };
   }).filter(Boolean);
   return {
     title: str(x.title, 300) || 'Exam', duration: Math.min(600, Math.max(1, Math.round(num(x.duration)) || 60)),

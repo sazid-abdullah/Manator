@@ -1440,10 +1440,12 @@ function importDocForm() {
   });
 }
 
+const docHasFigures = doc => db.exams.some(e => e.docId === doc.id && e.questions.some(q => q.figure || q.optionFigures));
 function openDoc(doc) {
   const hasKey = !!splitAnswerKey(doc.content).answers;
   openModal(doc.title, `<div class="muted small" style="margin-bottom:10px">${esc(AI_TOOLS[doc.type] || doc.type)} · ${esc(fmtDate(doc.createdAt.slice(0, 10)))}${doc.studentId ? ' · ' + esc(studentName(doc.studentId)) : ''}</div>
     <div class="actions" style="margin-bottom:12px">${doc.type === 'exam' ? '<button class="btn sm primary" id="d-exam">Start exam</button>' : ''}<button class="btn sm" id="d-print">Print</button>${hasKey ? '<button class="btn sm" id="d-paper">Print without answers</button>' : ''}<button class="btn sm" id="d-copy">Copy</button><button class="btn sm" id="d-edit">Edit text</button><button class="btn sm danger" id="d-del">Delete</button></div>
+    ${docHasFigures(doc) ? '<div class="notice" style="margin-bottom:12px">This paper\'s pictures show in the exam and in Preview with answers, not here or when printed.</div>' : ''}
     <div class="doc" id="d-body">${renderMarkdown(doc.content)}</div>`,
   body => {
     body.querySelector('#d-print').onclick = () => printMarkdown(doc.title, doc.content);
@@ -1495,7 +1497,10 @@ function examText(ex) {
     confirmTitle: 'Submit exam?', confirmLeft: n => `${n} question${n === 1 ? ' is' : 's are'} not answered yet. `, confirmLock: "You can't change answers after submitting.", cancel: 'Cancel',
   };
 }
-function optLabels(ex) { return /[\u0980-\u09FF]/.test(JSON.stringify(ex.questions.slice(0, 8))) ? OPT_LETTERS_BN : OPT_LETTERS; }
+function optLabels(ex) { return /[\u0980-\u09FF]/.test(JSON.stringify(ex.questions.slice(0, 8), (k, v) => (k === 'figure' || k === 'optionFigures' ? undefined : v))) ? OPT_LETTERS_BN : OPT_LETTERS; }
+const figHTML = (src, cls) => (src ? `<img class="exam-fig${cls ? ' ' + cls : ''}" src="${esc(src)}" alt="Picture" loading="lazy">` : '');
+const optFig = (q, i) => (q.optionFigures && q.optionFigures[i]) || '';
+const optText = (q, i) => q.options[i] || (optFig(q, i) ? '(picture)' : '');
 function cqTotal(q) { return q.parts.reduce((a, p) => a + p.marks, 0); }
 function qParts(q) { return q.type === 'cq' ? q.parts : [{ label: '', text: q.text, marks: q.marks, answer: q.answer }]; }
 function partAnswer(at, q, i) { const a = at.answers[q.id]; return String((q.type === 'cq' ? a && a[i] : a) || ''); }
@@ -1512,7 +1517,8 @@ function examStats(ex) {
   const cq = ex.questions.filter(q => q.type === 'cq');
   const wr = ex.questions.filter(q => q.type === 'written');
   const cqMax = sumOf(cq.map(cqTotal).sort((a, b) => b - a).slice(0, cqLimit(ex, cq.length)));
-  return { mcq: mcq.length, cq: cq.length, written: wr.length, noKey: mcq.filter(q => q.answer == null).length, guessed: mcq.filter(q => q.guessed).length,
+  const figures = new Set(ex.questions.flatMap(q => [q.figure, ...(q.optionFigures || [])]).filter(Boolean)).size;
+  return { mcq: mcq.length, cq: cq.length, written: wr.length, noKey: mcq.filter(q => q.answer == null).length, guessed: mcq.filter(q => q.guessed).length, figures,
     max: sumOf(mcq.map(q => q.marks)) + cqMax + sumOf(wr.map(q => q.marks)) };
 }
 function examSummary(ex) {
@@ -1594,6 +1600,8 @@ function openExamSetup(doc, opts) {
   openModal('Start exam', `<form class="form"><div class="notice">${esc(examSummary(ex))}</div>
     ${st.noKey ? `<div class="notice warn">${st.noKey} MCQ${st.noKey === 1 ? ' has' : 's have'} no answer, so ${st.noKey === 1 ? 'it' : 'they'} won't be marked automatically.</div>` : ''}
     ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
+    ${st.figures ? `<div class="notice">${st.figures} picture${st.figures === 1 ? ' was' : 's were'} cut out of the paper and will show in the exam. Check ${st.figures === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
+    ${doc.meta?.missedFigures ? `<div class="notice warn">The AI found ${doc.meta.missedFigures} more picture${doc.meta.missedFigures === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${doc.meta.missedFigures === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
     ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Manator can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
@@ -1621,14 +1629,97 @@ function openExamSetup(doc, opts) {
 const PAPER_FILES = /\.(pdf|png|jpe?g|webp)$/;
 const IMAGE_MIME = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
 
+// Page images the AI's figure boxes refer to. A photo is redrawn first so the AI and the cut-outs see the same upright pixels.
+async function photoPage(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+    return c;
+  } catch (e) { return null; }
+}
+function pdfPages(bytes) {
+  let doc = null;
+  const pages = new Map();
+  return n => {
+    if (!pages.has(n)) pages.set(n, (async () => {
+      doc = doc || await (await loadPdfjs()).getDocument({ data: new Uint8Array(bytes.slice(0)), isEvalSupported: false }).promise;
+      if (n > doc.numPages) return null;
+      const page = await doc.getPage(n), base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(4, 1800 / Math.max(base.width, base.height)) });
+      const c = document.createElement('canvas');
+      c.width = Math.round(viewport.width); c.height = Math.round(viewport.height);
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport }).promise;
+      return c;
+    })().catch(() => null));
+    return pages.get(n);
+  };
+}
+
+// box is [ymin, xmin, ymax, xmax] in 0–1000 page units, as Gemini gives it. A little margin keeps labels at the edge.
+function cropFigure(page, box) {
+  const [y0, x0, y1, x1] = box.map(v => Math.min(1000, Math.max(0, num(v))));
+  if (y1 - y0 < 8 || x1 - x0 < 8) return '';
+  const pad = 12, W = page.width / 1000, H = page.height / 1000;
+  const sx = Math.max(0, x0 - pad) * W, sy = Math.max(0, y0 - pad) * H;
+  const sw = Math.min(1000, x1 + pad) * W - sx, sh = Math.min(1000, y1 + pad) * H - sy;
+  const k = Math.min(1, 1000 / sw, 800 / sh);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(page, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.82);
+}
+
+// Replaces the AI's figure boxes with cut-out pictures. Returns how many it couldn't cut out.
+async function cutFigures(raw, getPage) {
+  const done = new Map();
+  let missed = 0;
+  const cut = async f => {
+    if (!isObj(f) || !Array.isArray(f.box) || f.box.length !== 4) return '';
+    const n = Math.max(1, Math.round(num(f.page)) || 1), key = `${n}:${f.box.join(',')}`;
+    if (!done.has(key)) done.set(key, getPage(n).then(p => (p ? cropFigure(p, f.box) : '')).catch(() => ''));
+    const src = await done.get(key);
+    if (!src) missed++;
+    return src;
+  };
+  for (const q of isObj(raw) && Array.isArray(raw.questions) ? raw.questions.filter(isObj) : []) {
+    if (q.figure != null) q.figure = await cut(q.figure);
+    if (!Array.isArray(q.optionFigures)) { delete q.optionFigures; continue; }
+    const figs = [];
+    for (let i = 0; i < (Array.isArray(q.options) ? q.options.length : 0); i++) {
+      figs.push(q.optionFigures[i] == null ? '' : await cut(q.optionFigures[i]));
+      if (!figs[i] && Array.isArray(q.options) && !str(q.options[i]).trim()) q.options[i] = '(picture missing)';
+    }
+    q.optionFigures = figs;
+  }
+  return missed;
+}
+
 async function readPaperToExam(file) {
   const low = file.name.toLowerCase();
-  let content = null, text = null, files = [], skipped = 0;
+  let content = null, text = null, files = [], skipped = 0, getPage = null;
   if (PAPER_FILES.test(low)) {
     if (file.size > SOURCE_FILE_MAX) throw new Error(`"${file.name}" is too big. PDFs and photos can be up to 14 MB.`);
     const pdf = low.endsWith('.pdf'), bytes = await file.arrayBuffer();
-    if (db.ai.provider === 'gemini') files = [{ mimeType: pdf ? 'application/pdf' : file.type || IMAGE_MIME[low.split('.').pop()], data: toBase64(bytes) }];
-    else if (!pdf) throw new Error('Only Google Gemini can read photos. Switch to Gemini in Settings → AI, or upload a Word or text file.');
+    if (db.ai.provider === 'gemini') {
+      const photo = !pdf && await photoPage(file);
+      if (photo) {
+        files = [{ mimeType: 'image/jpeg', data: photo.toDataURL('image/jpeg', 0.92).split(',')[1] }];
+        getPage = n => Promise.resolve(n === 1 ? photo : null);
+      } else {
+        files = [{ mimeType: pdf ? 'application/pdf' : file.type || IMAGE_MIME[low.split('.').pop()], data: toBase64(bytes) }];
+        if (pdf) getPage = pdfPages(bytes);
+      }
+    } else if (!pdf) throw new Error('Only Google Gemini can read photos. Switch to Gemini in Settings → AI, or upload a Word or text file.');
     else {
       const r = await pdfText(bytes);
       if (r.text.replace(/\s/g, '').length < 40 * r.pages) throw new Error(`"${file.name}" looks like a scanned PDF with no text inside. Switch to Google Gemini in Settings → AI, which can read scanned pages.`);
@@ -1639,9 +1730,11 @@ async function readPaperToExam(file) {
     text = content;
     if (!content.trim()) throw new Error('No text found in this file.');
   }
-  const exam = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files })));
+  const raw = await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(text), { temperature: 0.1, json: true, files });
+  const missedFigures = getPage ? await cutFigures(raw, getPage) : 0;
+  const exam = normalizeExam(raw);
   if (!exam.questions.length) throw new Error('No questions were found in this paper.');
-  return { exam, content, skipped };
+  return { exam, content, skipped, missedFigures };
 }
 
 // Library copy written from the AI's reading of a PDF or photo; the original file isn't kept.
@@ -1650,7 +1743,7 @@ const isFileCopy = doc => PAPER_FILES.test(String(doc.meta?.importedFrom || '').
 // Library copy of a paper the AI read from a PDF or photo, with the answer key at the end.
 function examToMarkdown(ex) {
   const T = examText(ex), L = optLabels(ex), bn = L === OPT_LETTERS_BN;
-  const out = [], key = [];
+  const out = [], key = [], pic = bn ? '*[চিত্র]*' : '*[Picture]*';
   if (ex.instructions) out.push(ex.instructions);
   out.push(`*${T.time(ex.duration)}*`);
   for (const [type, title] of [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]]) {
@@ -1661,13 +1754,13 @@ function examToMarkdown(ex) {
     for (const q of qs) {
       if (type === 'mcq') {
         if (q.stimulus) out.push(q.stimulus);
-        out.push(`**${q.n}.** ${q.text}`, q.options.map((o, i) => `- ${L[i]}. ${o}`).join('\n'));
-        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer]}`}`);
+        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic] : []), q.options.map((o, i) => `- ${L[i]}. ${o || pic}`).join('\n'));
+        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer] || pic}`}`);
         continue;
       }
-      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim());
+      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic] : []));
       qParts(q).forEach(p => {
-        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`);
+        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`, ...(type === 'written' && q.figure ? [pic] : []));
         if (p.answer) ks.push(`- ${q.n}${type === 'cq' && p.label ? ` (${p.label})` : ''}. ${p.answer.replace(/\n+/g, ' ')}`);
       });
     }
@@ -1680,7 +1773,7 @@ function examToMarkdown(ex) {
 function uploadPaperForm(studentId) {
   openModal('Upload question paper', `<form class="form" id="f-upload">
       <label class="field">Question paper *<input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.doc,.txt,.md" required></label>
-      <p class="help" style="margin:0">A PDF, a photo of the paper, a Word file or a text file. The AI reads it once and turns it into an on-screen exam with tap-to-answer MCQs and answer boxes. ${db.ai.provider === 'gemini' ? 'Scanned PDFs and photos work too.' : 'Only Google Gemini can read photos and scanned PDFs (Settings → AI).'} The whole file is sent to the AI, so remove students' names first.</p>
+      <p class="help" style="margin:0">A PDF, a photo of the paper, a Word file or a text file. The AI reads it once and turns it into an on-screen exam with tap-to-answer MCQs and answer boxes. ${db.ai.provider === 'gemini' ? 'Scanned PDFs and photos work too, and diagrams, graphs and other pictures in the questions are cut out and shown in the exam.' : 'Only Google Gemini can read photos and scanned PDFs, and show the pictures in questions (Settings → AI).'} The whole file is sent to the AI, so remove students' names first.</p>
       <label class="field">Title<input name="title" placeholder="Taken from the paper if empty"></label>
       <label class="field">Student (optional)<select name="studentId">${studentOptions(studentId || ui.docsStudent || '', true, 'No student')}</select></label>
       <div class="notice err" id="up-err" hidden></div>
@@ -1697,9 +1790,9 @@ function uploadPaperForm(studentId) {
       btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
       try {
         const d = formData(form);
-        const { exam, content, skipped } = await readPaperToExam(file);
+        const { exam, content, skipped, missedFigures } = await readPaperToExam(file);
         const title = d.title || (exam.title !== 'Exam' ? exam.title : file.name.replace(/\.[^.]+$/, ''));
-        const doc = { id: uid(), type: 'exam', title, content: content || examToMarkdown(exam), studentId: d.studentId || '', meta: skipped ? { importedFrom: file.name, skippedImages: skipped } : { importedFrom: file.name }, createdAt: new Date().toISOString() };
+        const doc = { id: uid(), type: 'exam', title, content: content || examToMarkdown(exam), studentId: d.studentId || '', meta: { importedFrom: file.name, ...(skipped && { skippedImages: skipped }), ...(missedFigures && { missedFigures }) }, createdAt: new Date().toISOString() };
         const ex = { ...exam, title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: doc.createdAt };
         db.docs.push(doc); db.exams.push(ex);
         if (!save()) {
@@ -1726,6 +1819,18 @@ function openExamPreview(ex, doc, opts) {
   b2 => {
     b2.querySelector('#ex-back').onclick = () => openExamSetup(doc, opts);
     b2.addEventListener('click', e => {
+      const d = e.target.closest('[data-pfig]');
+      if (d) {
+        const [qid, i] = d.dataset.pfig.split(':');
+        const q = ex.questions.find(x => x.id === qid);
+        if (!q) return;
+        const prev = [q.figure, q.optionFigures && [...q.optionFigures], [...q.options], doc.content, ex.hash];
+        if (i == null) delete q.figure;
+        else if (q.optionFigures) { q.optionFigures[Number(i)] = ''; if (!q.options[Number(i)]) q.options[Number(i)] = '(picture removed)'; }
+        if (isFileCopy(doc)) { doc.content = examToMarkdown(ex); ex.hash = hashStr(doc.content); }
+        if (!save()) { [q.figure, q.optionFigures, q.options, doc.content, ex.hash] = prev; if (prev[0] === undefined) delete q.figure; return; }
+        return openExamPreview(ex, doc, opts);
+      }
       const b = e.target.closest('[data-pkey]');
       if (!b) return;
       const [qid, i] = b.dataset.pkey.split(':');
@@ -1742,18 +1847,21 @@ function openExamPreview(ex, doc, opts) {
 
 function prevMcqHTML(q, L, editable) {
   const item = (o, i) => {
-    const on = i === q.answer, t = `${L[i]}. ${esc(o)}${on ? ' ✓' : ''}`;
-    return `<li class="${on ? 'pos' : ''}">${editable ? `<button type="button" class="exam-prev-opt" data-pkey="${q.id}:${i}" aria-pressed="${on}">${t}</button>` : t}</li>`;
+    const on = i === q.answer, t = `${L[i]}. ${esc(o)}${on ? ' ✓' : ''}${figHTML(optFig(q, i), 'opt')}`;
+    return `<li class="${on ? 'pos' : ''}">${editable ? `<button type="button" class="exam-prev-opt" data-pkey="${q.id}:${i}" aria-pressed="${on}">${t}</button>${optFig(q, i) ? figDelBtn(`${q.id}:${i}`) : ''}` : t}</li>`;
   };
   return `${q.guessed ? '<span class="badge yellow">AI answer – check</span>' : ''}<ol class="exam-prev-opts">${q.options.map(item).join('')}</ol>`;
 }
 
+const figDelBtn = key => `<button type="button" class="btn sm ghost exam-fig-del" data-pfig="${key}">Remove picture</button>`;
+
 function examPreviewHTML(ex, editable) {
   const L = optLabels(ex);
+  const fig = q => (q.figure ? `<div class="exam-fig-wrap">${figHTML(q.figure)}${editable ? figDelBtn(q.id) : ''}</div>` : '');
   return ex.questions.map(q => `<div class="exam-q">${q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : ''}
-    ${q.type === 'mcq' ? `<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div><div data-pq="${q.id}">${prevMcqHTML(q, L, editable)}</div>`
-      : `${q.type === 'cq' ? `<div><b>${esc(q.n)}.</b></div>` : ''}${qParts(q).map(p => `<div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
-        ${p.answer ? `<div class="exam-ans muted">${esc(p.answer)}</div>` : ''}`).join('')}`}</div>`).join('');
+    ${q.type === 'mcq' ? `<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>${fig(q)}<div data-pq="${q.id}">${prevMcqHTML(q, L, editable)}</div>`
+      : `${q.type === 'cq' ? `<div><b>${esc(q.n)}.</b></div>${fig(q)}` : ''}${qParts(q).map(p => `<div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
+        ${q.type === 'written' ? fig(q) : ''}${p.answer ? `<div class="exam-ans muted">${esc(p.answer)}</div>` : ''}`).join('')}`}</div>`).join('');
 }
 
 // With "answer any N", only the N most-answered creative questions are required.
@@ -1789,11 +1897,11 @@ function viewExam(id) {
   const flags = new Set(at.flags || []);
   const bm = q => `<button type="button" class="exam-bm${flags.has(q.id) ? ' on' : ''}" data-bm="${q.id}" aria-pressed="${flags.has(q.id)}" aria-label="${esc(T.bookmark)}" title="${esc(T.bookmark)}">${BM_ICON}</button>`;
   const stim = q => (q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : '');
-  const mcq = ex.questions.filter(q => q.type === 'mcq').map(q => `<div class="card exam-q" id="eq-${q.id}">${stim(q)}<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>
+  const mcq = ex.questions.filter(q => q.type === 'mcq').map(q => `<div class="card exam-q" id="eq-${q.id}">${stim(q)}<div class="doc">${renderMarkdown(`**${q.n}.** ${q.text}`)}</div>${figHTML(q.figure)}
     <div class="exam-qtools">${bm(q)}</div>
-    <div class="exam-opts" role="radiogroup">${q.options.map((o, i) => `<label class="exam-opt"><input type="radio" name="${q.id}" value="${i}"${at.answers[q.id] === i ? ' checked' : ''}><span class="exam-ol">${L[i]}</span><span class="doc">${renderMarkdown(o)}</span></label>`).join('')}</div></div>`).join('');
-  const writtenQ = q => `<div class="card exam-q" id="eq-${q.id}"><div class="exam-qn"><span>${q.type === 'cq' ? `<b>${esc(q.n)}.</b> <span class="muted small">${esc(T.marks(fmtN(cqTotal(q))))}</span>` : ''}</span>${bm(q)}</div>${stim(q)}
-    ${qParts(q).map((p, i) => `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${T.num(fmtN(p.marks))}]*`)}</div>
+    <div class="exam-opts" role="radiogroup">${q.options.map((o, i) => `<label class="exam-opt"><input type="radio" name="${q.id}" value="${i}"${at.answers[q.id] === i ? ' checked' : ''}><span class="exam-ol">${L[i]}</span><span class="doc">${figHTML(optFig(q, i), 'opt')}${o ? renderMarkdown(o) : ''}</span></label>`).join('')}</div></div>`).join('');
+  const writtenQ = q => `<div class="card exam-q" id="eq-${q.id}"><div class="exam-qn"><span>${q.type === 'cq' ? `<b>${esc(q.n)}.</b> <span class="muted small">${esc(T.marks(fmtN(cqTotal(q))))}</span>` : ''}</span>${bm(q)}</div>${stim(q)}${q.type === 'cq' ? figHTML(q.figure) : ''}
+    ${qParts(q).map((p, i) => `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${T.num(fmtN(p.marks))}]*`)}</div>${q.type === 'written' ? figHTML(q.figure) : ''}
       <textarea rows="${p.marks > 2 ? 6 : 3}" data-q="${q.id}" data-part="${i}" aria-label="Answer ${esc(q.n)}${esc(p.label)}" placeholder="${esc(T.placeholder)}">${esc(partAnswer(at, q, i))}</textarea></div>`).join('')}</div>`;
   const cqs = ex.questions.filter(q => q.type === 'cq');
   const wr = ex.questions.filter(q => q.type === 'written');
@@ -1923,27 +2031,27 @@ function viewResult(id) {
   const mins = Math.max(1, Math.round(((at.submittedAt || at.endsAt) - at.startedAt) / 60e3));
   const mcqs = ex.questions.filter(q => q.type === 'mcq');
   const wqs = ex.questions.filter(q => q.type !== 'mcq');
-  const opt = (q, i) => `${L[i]}. ${esc(q.options[i])}`;
+  const opt = (q, i) => `${L[i]}. ${esc(optText(q, i))}`;
   const mcqRows = mcqs.map(q => {
     const a = at.answers[q.id];
     const ok = q.answer != null && a === q.answer;
     if (q.answer == null) {
-      return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>
+      return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}
         <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)} · This MCQ has no answer key</div></div>
-        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${o}`.slice(0, 60))}</option>`).join('')}</select></div>`;
+        <select data-setkey="${q.id}" aria-label="Correct answer for ${esc(q.n)}"><option value="">Set correct answer…</option>${q.options.map((o, i) => `<option value="${i}">${esc(`${L[i]}. ${optText(q, i)}`.slice(0, 60))}</option>`).join('')}</select></div>`;
     }
     const badge = q.answer == null ? '<span class="badge yellow">No key</span>' : a == null ? '<span class="badge">—</span>' : ok ? '<span class="badge green">✓</span>' : '<span class="badge red">✗</span>';
-    return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>
+    return `<div class="row"><div class="grow"><div class="title">${esc(q.n)}. ${esc(q.text.replace(/\s+/g, ' ').slice(0, 140))}</div>${figHTML(q.figure, 'thumb')}
       <div class="meta">Answered: ${a == null ? 'nothing' : opt(q, a)}${!ok && q.answer != null ? ` · Correct: ${opt(q, q.answer)}` : ''}</div></div>${badge}</div>`;
   }).join('');
   const sug = at.aiMarks || {};
   const wrCards = wqs.map(q => `<div class="card exam-q">${q.type === 'cq' ? `<div class="exam-qn"><b>${esc(q.n)}.</b></div>` : ''}
-    ${q.stimulus ? `<details><summary class="small">Stimulus</summary><div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div></details>` : ''}
+    ${q.stimulus || (q.type === 'cq' && q.figure) ? `<details><summary class="small">Stimulus</summary>${q.stimulus ? `<div class="doc exam-stim">${renderMarkdown(q.stimulus)}</div>` : ''}${q.type === 'cq' ? figHTML(q.figure) : ''}</details>` : ''}
     ${qParts(q).map((p, i) => {
       const ans = partAnswer(at, q, i).trim();
       const m = partMark(at, q, i);
       const s = sug[`${q.id}:${i}`];
-      return `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>
+      return `<div class="exam-part"><div class="doc">${renderMarkdown(`${q.type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`)}</div>${q.type === 'written' ? figHTML(q.figure) : ''}
         <div class="exam-ans">${ans ? esc(ans) : '<span class="muted">No answer typed (written on paper?)</span>'}</div>
         ${p.answer ? `<details><summary class="small">Model answer</summary><div class="doc small">${renderMarkdown(p.answer)}</div></details>` : ''}
         <div class="mark-row"><label class="mark-in">Marks <input type="number" name="m:${q.id}:${i}" min="0" max="${p.marks}" step="0.5" value="${m == null ? '' : m}" data-sug="${s ? s.marks : ''}"> / ${fmtN(p.marks)}</label>
