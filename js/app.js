@@ -1580,10 +1580,16 @@ function openExamSetup(doc, opts) {
           const n = normalizeExam((await callAIJSON(EXAM_JSON_SYSTEM, examJsonPrompt(doc.content), { temperature: 0.1, json: true })));
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
-          carryFigures(db.exams.filter(x => x.docId === doc.id).pop(), n);
+          const prevEx = db.exams.filter(x => x.docId === doc.id).pop();
+          const missed = carryFigures(prevEx, n);
+          const was = [db.exams, doc.content, doc.meta];
+          if (isFileCopy(doc)) {
+            doc.content = renumberMarks(doc.content, prevEx, n);
+            doc.meta = { ...doc.meta, missedFigures: missed || undefined };
+          }
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
-          db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash, createdAt: new Date().toISOString() });
-          if (!save()) return;
+          db.exams.push({ ...n, title: doc.title || n.title, id: uid(), docId: doc.id, hash: hashStr(doc.content), createdAt: new Date().toISOString() });
+          if (!save()) { [db.exams, doc.content, doc.meta] = was; return; }
           openExamSetup(doc, opts);
         } catch (err) {
           if (!document.body.contains(btn)) return toast(`Couldn't prepare the exam: ${err.message || err}`, 'error');
@@ -1739,29 +1745,52 @@ async function readPaperToExam(file) {
   return { exam, content, skipped, missedFigures };
 }
 
-// The original file isn't kept, so re-reading an edited library copy takes the pictures from the
-// previous exam, matching questions by type and number.
-const PIC_LINE = /\s*\*\[(Picture|চিত্র)\]\*\s*/g;
-const PIC_OPT = /^(\*?\[(picture|চিত্র)\]\*?|\(picture( missing| removed)?\))$/i;
+// The original file isn't kept, so the library copy marks each picture as *[Picture k]*, k numbering the
+// exam's distinct pictures in paper order. Re-reading an edited copy puts back the pictures whose markers remain.
+const PIC_MARK = /\*\[(?:Picture|চিত্র)(?: (\d+))?\]\*/g;
+const PIC_MARK_LINE = new RegExp(`\\s*${PIC_MARK.source}\\s*`, 'g');
+function figNums(ex) {
+  const m = new Map();
+  for (const type of ['mcq', 'cq', 'written']) {
+    for (const q of ex.questions) if (q.type === type) for (const f of [q.figure, ...(q.optionFigures || [])]) if (f && !m.has(f)) m.set(f, m.size + 1);
+  }
+  return m;
+}
+// Returns how many markers had no picture to put back.
 function carryFigures(prev, ex) {
-  if (!prev) return ex;
-  const old = new Map(prev.questions.map(q => [`${q.type}:${q.n}`, q]));
-  const clean = t => t.replace(PIC_LINE, '\n').trim();
+  const byNum = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []);
+  const old = new Map(prev ? prev.questions.map(q => [`${q.type}:${q.n}`, q]) : []);
+  const marks = t => [...String(t || '').matchAll(PIC_MARK)];
+  const clean = t => String(t || '').replace(PIC_MARK_LINE, '\n').trim();
+  let missed = 0;
   for (const q of ex.questions) {
-    const o = old.get(`${q.type}:${q.n}`);
-    if (!o) continue;
-    if (o.figure && !q.figure) q.figure = o.figure;
-    if (q.type === 'mcq' && o.optionFigures && o.options.length === q.options.length) {
-      q.optionFigures = [...o.optionFigures];
-      q.options = q.options.map((t, i) => (q.optionFigures[i] && PIC_OPT.test(t.trim()) ? '' : t));
-    }
-    if (q.figure || q.optionFigures) {
+    const found = [q.stimulus, q.text, ...(q.parts || []).map(p => p.text)].flatMap(marks);
+    if (found.length) {
+      const m = found.find(x => x[1]);
+      // Unnumbered markers come from copies saved before markers were numbered.
+      const f = m ? byNum.get(m[1]) : old.get(`${q.type}:${q.n}`)?.figure;
+      if (f) q.figure = f; else missed++;
       if (q.stimulus) q.stimulus = clean(q.stimulus);
       if (q.text) q.text = clean(q.text);
       if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
     }
+    if (q.type !== 'mcq') continue;
+    // An unnumbered option marker can't say which picture it was, so it isn't guessed.
+    const figs = q.options.map(t => { const m = marks(t)[0]; return m ? (m[1] && byNum.get(m[1])) || null : undefined; });
+    if (figs.every(f => f === undefined)) continue;
+    missed += figs.filter(f => f === null).length;
+    q.options = q.options.map((t, i) => (figs[i] === undefined ? t : clean(t) || (figs[i] ? '' : '(picture missing)')));
+    if (figs.some(Boolean)) q.optionFigures = figs.map(f => f || '');
   }
-  return ex;
+  return missed;
+}
+// Rewrites the markers in a library copy to the new exam's numbering.
+function renumberMarks(content, prev, ex) {
+  const was = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []), now = figNums(ex);
+  return content.replace(PIC_MARK, (s, k) => {
+    const f = k && was.get(k);
+    return f && now.has(f) ? s.replace(/( \d+)?\]\*$/, ` ${now.get(f)}]*`) : s.replace(/ \d+\]\*$/, ']*');
+  });
 }
 
 // Library copy written from the AI's reading of a PDF or photo; the original file isn't kept.
@@ -1770,7 +1799,8 @@ const isFileCopy = doc => PAPER_FILES.test(String(doc.meta?.importedFrom || '').
 // Library copy of a paper the AI read from a PDF or photo, with the answer key at the end.
 function examToMarkdown(ex) {
   const T = examText(ex), L = optLabels(ex), bn = L === OPT_LETTERS_BN;
-  const out = [], key = [], pic = bn ? '*[চিত্র]*' : '*[Picture]*';
+  const nums = figNums(ex), out = [], key = [];
+  const pic = f => `*[${bn ? 'চিত্র' : 'Picture'} ${nums.get(f)}]*`;
   if (ex.instructions) out.push(ex.instructions);
   out.push(`*${T.time(ex.duration)}*`);
   for (const [type, title] of [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]]) {
@@ -1781,13 +1811,13 @@ function examToMarkdown(ex) {
     for (const q of qs) {
       if (type === 'mcq') {
         if (q.stimulus) out.push(q.stimulus);
-        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic] : []), q.options.map((o, i) => `- ${L[i]}. ${o || pic}`).join('\n'));
-        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer] || pic}`}`);
+        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic(q.figure)] : []), q.options.map((o, i) => `- ${L[i]}. ${o || (optFig(q, i) ? pic(optFig(q, i)) : '')}`).join('\n'));
+        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer] || (optFig(q, q.answer) ? pic(optFig(q, q.answer)) : '')}`}`);
         continue;
       }
-      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic] : []));
+      if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic(q.figure)] : []));
       qParts(q).forEach(p => {
-        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`, ...(type === 'written' && q.figure ? [pic] : []));
+        out.push(`${type === 'written' ? `**${q.n}.** ` : p.label ? `**${p.label}.** ` : ''}${p.text} *[${fmtN(p.marks)}]*`, ...(type === 'written' && q.figure ? [pic(q.figure)] : []));
         if (p.answer) ks.push(`- ${q.n}${type === 'cq' && p.label ? ` (${p.label})` : ''}. ${p.answer.replace(/\n+/g, ' ')}`);
       });
     }
