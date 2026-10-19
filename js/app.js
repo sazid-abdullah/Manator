@@ -1581,11 +1581,10 @@ function openExamSetup(doc, opts) {
           if (!n.questions.length) throw new Error('No questions were found in this paper.');
           if (!document.body.contains(btn)) return;
           const prevEx = db.exams.filter(x => x.docId === doc.id).pop();
-          const missed = carryFigures(prevEx, n);
+          const legacy = [], missed = carryFigures(prevEx, n, legacy);
           const was = [db.exams, doc.content, doc.meta];
           if (isFileCopy(doc)) {
-            // Copies saved before markers were numbered are rewritten once from the new exam, numbering them.
-            doc.content = /\*\[(?:Picture|চিত্র)\]\*/.test(doc.content) ? examToMarkdown(n) : renumberMarks(doc.content, prevEx, n);
+            doc.content = renumberMarks(doc.content, prevEx, n, legacy);
             doc.meta = { ...doc.meta, markMissed: missed || undefined };
           }
           db.exams = db.exams.filter(x => x.docId !== doc.id || db.attempts.some(a => a.examId === x.id));
@@ -1757,8 +1756,9 @@ function figNums(ex) {
   }
   return m;
 }
-// Returns how many markers had no picture to put back.
-function carryFigures(prev, ex) {
+// Returns how many markers had no picture to put back. Fills legacy with the picture (or null) each
+// unnumbered marker got, in the order the questions read them.
+function carryFigures(prev, ex, legacy = []) {
   const byNum = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []);
   const old = new Map(prev ? prev.questions.map(q => [`${q.type}:${q.n}`, q]) : []);
   const marks = t => [...String(t || '').matchAll(PIC_MARK)];
@@ -1771,6 +1771,7 @@ function carryFigures(prev, ex) {
       // Unnumbered markers come from copies saved before markers were numbered.
       const f = m ? byNum.get(m[1]) : old.get(`${q.type}:${q.n}`)?.figure;
       if (f) q.figure = f; else missed++;
+      found.forEach(x => { if (!x[1]) legacy.push(f || null); });
       if (q.stimulus) q.stimulus = clean(q.stimulus);
       if (q.text) q.text = clean(q.text);
       if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
@@ -1781,18 +1782,29 @@ function carryFigures(prev, ex) {
     const slot = i => (o && o.options.length === q.options.length && optFig(o, i)) || null;
     const figs = q.options.map((t, i) => { const m = marks(t)[0]; return m ? (m[1] ? byNum.get(m[1]) || null : slot(i)) : undefined; });
     if (figs.every(f => f === undefined)) continue;
+    q.options.forEach((t, i) => marks(t).forEach(x => { if (!x[1]) legacy.push(figs[i]); }));
     missed += figs.filter(f => f === null).length;
     q.options = q.options.map((t, i) => (figs[i] === undefined ? t : clean(t) || (figs[i] ? '' : '(picture missing)')));
     if (figs.some(Boolean)) q.optionFigures = figs.map(f => f || '');
   }
   return missed;
 }
-// Rewrites the markers in a library copy to the new exam's numbering.
-function renumberMarks(content, prev, ex) {
+// Rewrites the markers in a library copy to the new exam's numbering, changing nothing else. Unnumbered
+// markers before the answer key get numbers when there are as many as carryFigures read.
+function renumberMarks(content, prev, ex, legacy = []) {
   const was = new Map(prev ? [...figNums(prev)].map(([f, k]) => [String(k), f]) : []), now = figNums(ex);
-  return content.replace(PIC_MARK, (s, k) => {
-    const f = k && was.get(k);
-    return f && now.has(f) ? s.replace(/( \d+)?\]\*$/, ` ${now.get(f)}]*`) : s.replace(/ \d+\]\*$/, ']*');
+  const keyAt = content.search(/^## (Answer Key|উত্তরমালা)\s*$/m);
+  const body = keyAt < 0 ? content : content.slice(0, keyAt);
+  const plain = [...body.matchAll(PIC_MARK)].filter(m => !m[1]).length;
+  let i = 0;
+  return content.replace(PIC_MARK, (s, k, at) => {
+    if (!k) {
+      if (plain !== legacy.length || (keyAt >= 0 && at >= keyAt)) return s;
+      const f = legacy[i++];
+      return f && now.has(f) ? s.replace(/\]\*$/, ` ${now.get(f)}]*`) : s;
+    }
+    const f = was.get(k);
+    return f && now.has(f) ? s.replace(/ \d+\]\*$/, ` ${now.get(f)}]*`) : s.replace(/ \d+\]\*$/, ']*');
   });
 }
 
@@ -1804,6 +1816,7 @@ function examToMarkdown(ex) {
   const T = examText(ex), L = optLabels(ex), bn = L === OPT_LETTERS_BN;
   const nums = figNums(ex), out = [], key = [];
   const pic = f => `*[${bn ? 'চিত্র' : 'Picture'} ${nums.get(f)}]*`;
+  const optMd = (q, i) => [q.options[i], optFig(q, i) && pic(optFig(q, i))].filter(Boolean).join(' ');
   if (ex.instructions) out.push(ex.instructions);
   out.push(`*${T.time(ex.duration)}*`);
   for (const [type, title] of [['mcq', T.mcq], ['cq', T.cq], ['written', T.written]]) {
@@ -1814,8 +1827,8 @@ function examToMarkdown(ex) {
     for (const q of qs) {
       if (type === 'mcq') {
         if (q.stimulus) out.push(q.stimulus);
-        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic(q.figure)] : []), q.options.map((o, i) => `- ${L[i]}. ${o || (optFig(q, i) ? pic(optFig(q, i)) : '')}`).join('\n'));
-        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${q.options[q.answer] || (optFig(q, q.answer) ? pic(optFig(q, q.answer)) : '')}`}`);
+        out.push(`**${q.n}.** ${q.text}`, ...(q.figure ? [pic(q.figure)] : []), q.options.map((o, i) => `- ${L[i]}. ${optMd(q, i)}`).join('\n'));
+        ks.push(`- ${q.n}. ${q.answer == null ? '?' : `${L[q.answer]}. ${optMd(q, q.answer)}`}`);
         continue;
       }
       if (type === 'cq') out.push(`**${q.n}.** ${q.stimulus || ''}`.trim(), ...(q.figure ? [pic(q.figure)] : []));
