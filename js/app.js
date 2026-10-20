@@ -821,7 +821,7 @@ function bindMoney() {
 
 async function askMoneyAI(q) {
   if (!q || ui.moneyBusy) return;
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+  if (needAI()) return;
   ui.moneyQ = q;
   ui.moneyBusy = true;
   render();
@@ -1016,6 +1016,7 @@ function viewAI() {
   const tool = ui.aiTool in AI_TOOLS ? ui.aiTool : 'plan';
   const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${esc(p.name)} · ${esc(aiModel())}</div></div></div>
     ${ready ? '' : `<div class="notice warn">Connect a free AI provider first: <a href="#/settings">Settings → AI</a>. Google Gemini's free key takes a minute to create.</div>`}
+    ${planBarHTML()}
     <div class="seg" id="ai-tools" style="margin-bottom:16px">${Object.entries(AI_TOOLS).map(([k, v]) => `<button data-tool="${k}" class="${tool === k ? 'active' : ''}">${v}</button>`).join('')}</div>`;
   if (tool === 'results') {
     const ats = db.attempts.filter(a => !ui.docsStudent || a.studentId === ui.docsStudent).sort((a, b) => b.startedAt - a.startedAt);
@@ -1035,7 +1036,7 @@ function viewAI() {
   const r = ui.aiResult && ui.aiResult.tool === tool ? ui.aiResult : null;
   return head + `<div class="card"><form class="form" id="ai-form">${aiFormHTML(tool)}
       <div class="form-actions"><button class="btn primary" id="ai-go"${ui.aiBusy ? ' disabled' : ''}>${ui.aiBusy ? `<span class="spinner"></span> ${esc(ui.aiBusy)}` : `Generate ${AI_TOOLS[tool].toLowerCase()}`}</button></div></form></div>
-    <div id="ai-output">${r ? aiResultHTML(r) : ''}</div>`;
+    <div id="ai-output">${r ? aiResultHTML(r) : ''}</div>${adSlotHTML()}`;
 }
 
 function aiResultHTML(r) {
@@ -1135,7 +1136,7 @@ function bindAI() {
 }
 
 async function generateAI(d, tool) {
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+  if (needAI()) return;
   if (ui.aiBusy) return;
   const f = { ...d };
   if (tool === 'exam' && !f.topics && !aiSources(tool).length && !f.sourceText) return toast('Add the topics to test, or attach a past paper', 'error');
@@ -1572,7 +1573,7 @@ function openExamSetup(doc, opts) {
       <p class="help" style="margin-top:8px">Only the paper's text is sent to the AI.</p><div class="notice err" id="ex-err" hidden></div>
       <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ex-prep">Prepare exam</button></div>`, body => {
       body.querySelector('#ex-prep').onclick = async e => {
-        if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+        if (needAI()) return;
         const btn = e.currentTarget;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
@@ -1857,7 +1858,7 @@ function uploadPaperForm(studentId) {
       e.preventDefault();
       const file = form.file.files[0];
       if (!file) return;
-      if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+      if (needAI()) return;
       const btn = form.querySelector('#up-go'), box = form.querySelector('#up-err');
       btn.disabled = true; box.hidden = true;
       btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
@@ -2212,7 +2213,7 @@ async function aiMarkAttempt(id) {
       .filter(p => p.student_answer),
   })).filter(x => x.parts.length);
   if (!items.length) return toast('No typed answers to mark. Enter the marks for answers written on paper yourself.');
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); return; }
+  if (needAI()) return;
   ui.examBusy = 'Marking…';
   render();
   restoreMarkInputs(kept);
@@ -2245,6 +2246,7 @@ function viewSettings() {
   const curOptions = CURRENCIES.includes(db.settings.currency) ? CURRENCIES : [db.settings.currency, ...CURRENCIES];
   return `<div class="page-head"><div><h1>Settings</h1><div class="sub">Everything is stored only in this browser.</div></div></div>
     <div class="grid">
+      ${planCardHTML()}
       <div class="card"><h2>Profile</h2><form class="form" id="f-profile">
         <div class="form-row"><label class="field">Your name<input name="tutorName" value="${esc(db.settings.tutorName)}" placeholder="Shown in payment reminders"></label>
           <label class="field">Currency<select name="currency">${curOptions.map(c => `<option value="${esc(c)}"${c === db.settings.currency ? ' selected' : ''}>${esc(c.trim())}</option>`).join('')}</select></label></div>
@@ -2320,7 +2322,7 @@ function bindSettings() {
     const btn = ev.currentTarget;
     btn.disabled = true; btn.textContent = 'Testing…';
     try {
-      const out = await callAI('You are a connection test.', 'Reply with exactly: OK', { maxTokens: 1024, temperature: 0 });
+      const out = await callAI('You are a connection test.', 'Reply with exactly: OK', { maxTokens: 1024, temperature: 0, free: true });
       toast(`Connected to ${AI_PROVIDERS[db.ai.provider].name} (${aiLastModel}): "${out.trim().slice(0, 40)}"`);
       render();
     } catch (err) {
@@ -2465,7 +2467,7 @@ const ACTIONS = {
   'install': async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); },
   'open-doc': d => openDoc(db.docs.find(x => x.id === d.id)),
   'import-doc': () => importDocForm(),
-  'upload-paper': d => uploadPaperForm(d.student),
+  'upload-paper': d => { if (!needAI()) uploadPaperForm(d.student); },
   'ai-save': () => {
     const r = ui.aiResult; if (!r || r.savedId) return;
     const doc = { id: uid(), type: r.tool, title: r.title, content: r.content, studentId: r.studentId, meta: r.meta, createdAt: new Date().toISOString() };
@@ -2506,6 +2508,8 @@ const ACTIONS = {
     render();
   },
 };
+
+Object.assign(ACTIONS, PLAN_ACTIONS);
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');

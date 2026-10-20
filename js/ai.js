@@ -157,7 +157,10 @@ async function readError(res) {
   return err;
 }
 
+// Every AI request uses one plan credit, charged only when it succeeds (see js/plan.js).
 async function callAI(system, user, opts) {
+  const charge = !(opts && opts.free);
+  if (charge && !planAllowsAI()) throw aiLockedError();
   const provider = db.ai.provider;
   const c = cachedModels(provider);
   if (!c || Date.now() - c.at > MODEL_CACHE_MS) await fetchModelList(provider).catch(() => {});
@@ -169,6 +172,7 @@ async function callAI(system, user, opts) {
     try {
       const text = await callModel(provider, model, system, user, opts);
       aiLastModel = model;
+      if (charge) spendAICredit();
       return text;
     } catch (err) {
       const gone = isModelGone(err);
@@ -492,7 +496,7 @@ function repairJSON(t) {
 // One automatic retry, since a malformed JSON reply is usually a one-off.
 async function callAIJSON(system, user, opts) {
   for (let i = 0; ; i++) {
-    const reply = await callAI(system, user, i ? { ...opts, temperature: 0 } : opts);
+    const reply = await callAI(system, user, i ? { ...opts, temperature: 0, free: true } : opts);
     try { return parseJSONReply(reply); } catch (err) {
       console.warn('Unreadable AI reply from', aiLastModel, String(reply).slice(0, 2000));
       if (i) { err.message = `The AI's reply (${aiLastModel}) wasn't in the expected format, even on a second try. Press Try again, or choose another model in Settings → AI.`; throw err; }

@@ -1,8 +1,8 @@
 // Network-first so updates show up immediately; falls back to cache when offline.
-const CACHE = 'manator-v16';
+const CACHE = 'manator-v17';
 const ASSETS = [
   './', './index.html', './manifest.json', './icons/icon.svg', './css/style.css',
-  './js/store.js', './js/contracts.js', './js/ai.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
+  './js/store.js', './js/contracts.js', './js/ai.js', './js/plan.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
   './js/vendor/pdfjs/pdf.min.mjs', './js/vendor/pdfjs/pdf.worker.min.mjs',
 ];
 
