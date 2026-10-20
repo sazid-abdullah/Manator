@@ -2,6 +2,13 @@
 // (server/server.js); opened as plain static files it keeps the old "your own AI key" mode.
 const account = { server: false, user: null, config: null };
 const ACCOUNT_KEY = 'manator_account';
+let staticModeLogged = false;
+
+function logStaticMode(reason) {
+  if (staticModeLogged) return;
+  staticModeLogged = true;
+  console.info(`Manator is running in static mode (${reason}). Login, AI credits and Pro checkout need the optional Node server.`);
+}
 
 async function initAccount() {
   try {
@@ -13,9 +20,16 @@ async function initAccount() {
       return;
     }
     localStorage.removeItem(ACCOUNT_KEY);
+    logStaticMode('no API server detected');
   } catch (e) {
     // Offline: remember that this copy talks to a server.
-    try { const c = JSON.parse(localStorage.getItem(ACCOUNT_KEY)); if (c && c.config) Object.assign(account, { server: true, user: c.user, config: c.config }); } catch (err) { /* none */ }
+    try {
+      const c = JSON.parse(localStorage.getItem(ACCOUNT_KEY));
+      if (c && c.config) Object.assign(account, { server: true, user: c.user, config: c.config });
+      else logStaticMode('no cached server account');
+    } catch (err) {
+      logStaticMode('offline or API unreachable');
+    }
   }
 }
 
@@ -107,7 +121,15 @@ function adSlotHTML() {
     <button class="btn ghost" data-action="go-pro">Remove ads</button></div>`;
 }
 
-function planCardHTML() { return account.server ? `<div id="plan-card">${planCardInner()}</div>` : ''; }
+function planCardHTML() {
+  return account.server
+    ? `<div id="plan-card">${planCardInner()}</div>`
+    : `<div class="card"><h2>Account & Pro payments</h2>
+      <p class="muted small">This copy is loaded as a static site (for example GitHub Pages), so the optional <code>/api</code> server is not available.</p>
+      <p class="muted small">Because of that, login/signup, AI credits and Pro checkout are hidden here. To use them, run <code>npm start</code> on the Node server and open that server URL.</p>
+      <p class="help">Payment integration on the server: <b>test</b> mode (fake local checkout) or <b>SSLCommerz</b> (bKash, Nagad, Rocket, cards) with callback + validation before Pro is granted.</p>
+    </div>`;
+}
 function planCardInner() {
   const u = account.user, c = account.config;
   if (!u) return `<div class="card"><h2>Account</h2><p style="margin-bottom:12px">Sign in to use the AI tools. A free account comes with ${plural(c.welcomeCredits, 'AI credit')}; watch a short ad for more, or go Pro for unlimited AI.</p>

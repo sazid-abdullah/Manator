@@ -2535,7 +2535,8 @@ document.addEventListener('click', e => {
 window.addEventListener('storage', e => { if (e.key === STORE_KEY) { db = loadState(); if (modalRoot.hidden) render(); } });
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js')
+    .catch(err => console.warn('Service worker registration failed:', err)));
 }
 
 initAccount().then(render);
