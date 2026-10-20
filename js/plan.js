@@ -4,7 +4,7 @@
 const PLAN_KEY = 'manator_plan';
 const PLAN = {
   welcomeCredits: 3,
-  adCredits: 3,
+  adCredits: 1,
   adsPerDay: 5,
   adSeconds: 15,
   prices: {
@@ -75,7 +75,7 @@ function planCardHTML() {
   const last = plan.payments[plan.payments.length - 1];
   return `<div class="card"><h2>Plan</h2>
     ${pro ? `<p style="margin-bottom:12px"><span class="badge green">Pro</span> Unlimited AI and no ads until <b>${esc(fmtDate(toISO(new Date(plan.proUntil))))}</b>.</p>`
-      : `<p style="margin-bottom:12px"><span class="badge ${plan.credits ? 'blue' : 'red'}">Free</span> ${esc(creditsText())}. Watch a short ad for +${PLAN.adCredits} credits (${adsLeftToday()} of ${PLAN.adsPerDay} ads left today), or go Pro for unlimited AI.</p>`}
+      : `<p style="margin-bottom:12px"><span class="badge ${plan.credits ? 'blue' : 'red'}">Free</span> ${esc(creditsText())}. Watch a short ad for +${PLAN.adCredits} credit${PLAN.adCredits === 1 ? '' : 's'} (${adsLeftToday()} of ${PLAN.adsPerDay} ads left today), or go Pro for unlimited AI.</p>`}
     ${last ? `<p class="muted small" style="margin-bottom:12px">Last payment: ৳${esc(last.amount)} via ${esc(PLAN.methods[last.method] || last.method)} · ${esc(last.id)}${last.test ? ' (test)' : ''}</p>` : ''}
     <div class="actions">${pro ? '' : `<button class="btn" data-action="watch-ad"${adsLeftToday() ? '' : ' disabled'}>Watch ad · +${PLAN.adCredits}</button>`}
       <button class="btn primary" data-action="go-pro">${pro ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>
@@ -88,7 +88,7 @@ function openPaywall() {
   openModal('Unlock AI', `<p style="margin-bottom:14px">You've used your free AI credits. Students, classes, money and offline exams keep working; the AI tools need credits or Pro.</p>
     <div class="plan-opts">
       <div class="plan-opt"><h3>Free</h3><div class="plan-price">Watch an ad</div>
-        <p class="muted small">A ${PLAN.adSeconds}-second ad adds ${PLAN.adCredits} AI credits. ${ads} of ${PLAN.adsPerDay} left today.</p>
+        <p class="muted small">A ${PLAN.adSeconds}-second ad adds ${PLAN.adCredits} AI credit${PLAN.adCredits === 1 ? '' : 's'}. ${ads} of ${PLAN.adsPerDay} left today.</p>
         <button class="btn" id="pw-ad"${ads ? '' : ' disabled'}>${ads ? `Watch ad · +${PLAN.adCredits}` : 'Come back tomorrow'}</button></div>
       <div class="plan-opt best"><h3>Pro</h3><div class="plan-price">${priceText('monthly')}</div>
         <p class="muted small">Unlimited AI, no ads. Or ${priceText('yearly')} (save 33%).</p>
@@ -107,7 +107,7 @@ function openRewardedAd() {
       <div class="ad-creative"><span class="ad-tag">Ad</span><div class="ad-big">Demo ad</div><div class="muted small">A real ad from an ad network plays here.</div></div>
       <div class="progress"><span id="ad-bar" style="width:0%"></span></div>
       <p class="muted small" id="ad-left">Reward in ${left}s. Keep this tab open.</p></div>
-    <div class="form-actions"><button class="btn ghost" data-close>Close (no reward)</button><button class="btn primary" id="ad-claim" disabled>Claim +${PLAN.adCredits} credits</button></div>`, body => {
+    <div class="form-actions"><button class="btn ghost" data-close>Close (no reward)</button><button class="btn primary" id="ad-claim" disabled>Claim +${PLAN.adCredits} credit${PLAN.adCredits === 1 ? '' : 's'}</button></div>`, body => {
     const bar = body.querySelector('#ad-bar'), txt = body.querySelector('#ad-left'), claim = body.querySelector('#ad-claim');
     const timer = setInterval(() => {
       if (!document.body.contains(claim)) return clearInterval(timer);
@@ -127,7 +127,7 @@ function openRewardedAd() {
       savePlan();
       closeModal();
       render();
-      toast(`+${PLAN.adCredits} AI credits. ${creditsText()}.`);
+      toast(`+${PLAN.adCredits} AI credit${PLAN.adCredits === 1 ? '' : 's'}. ${creditsText()}.`);
     };
   });
 }
