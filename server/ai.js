@@ -75,8 +75,8 @@ function models(provider) {
   const fb = FALLBACK[provider];
   return ok.length ? ok : !(c.blocked[fb] > now) ? [fb] : [];
 }
-function block(provider, model, ms) {
-  if (!cache[provider]) cache[provider] = { list: [], at: 0, blocked: {} };
+function block(provider, key, model, ms) {
+  if (!cache[provider] || cache[provider].key !== key) cache[provider] = { key, list: [], at: 0, blocked: {} };
   cache[provider].blocked[model] = Date.now() + ms;
 }
 
@@ -156,8 +156,8 @@ async function generate(settings, system, user, opts) {
         if (err.final) throw err;
         const gone = err.status === 404 || (err.status === 400 && /model/i.test(err.message) && /not found|decommission|no longer|deprecat|not supported|does not exist|invalid model/i.test(err.message));
         const noFree = err.status === 429 && /limit:\s*0\b|"quotaValue":\s*"0"/.test(err.detail || err.message);
-        if (gone) { block(provider, model, 30 * 86400e3); continue; }
-        if (err.status === 429) { block(provider, model, noFree ? 7 * 86400e3 : 3600e3); continue; }
+        if (gone) { block(provider, key, model, 30 * 86400e3); continue; }
+        if (err.status === 429) { block(provider, key, model, noFree ? 7 * 86400e3 : 3600e3); continue; }
         if (err.status === 413 || /request too large|context length|maximum context/i.test(err.message)) { const e = new Error('This is too long for the AI. Send a shorter paper, or upload it in parts.'); e.status = 413; throw e; }
         break; // Key rejected, server error or network problem: try the next provider.
       }

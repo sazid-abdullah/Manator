@@ -42,6 +42,7 @@ async function api(path, body, method) {
 }
 function setAccountUser(u) {
   account.user = u;
+  if (u && u.serverNow) account.skew = u.serverNow - Date.now();
   try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ user: u, config: account.config })); } catch (e) { /* cache only */ }
 }
 async function refreshAccount() {
@@ -65,7 +66,7 @@ async function serverAI(system, user, opts) {
 const can = p => !!account.user && (account.user.perms || []).includes(p);
 const isStaff = () => !!account.user && (account.user.role === 'owner' || account.user.role === 'admin');
 const roleName = u => (u.role === 'owner' ? 'Owner' : 'Admin');
-const isPro = () => !!account.user && Number(account.user.proUntil) > Date.now();
+const isPro = () => !!account.user && Number(account.user.proUntil) > Date.now() + (account.skew || 0);
 const unlimitedAI = () => !!account.user && (isPro() || can('unlimited'));
 function aiCanReadFiles() { return account.server ? !!(account.config && account.config.ai.files) : db.ai.provider === 'gemini'; }
 
@@ -380,7 +381,10 @@ let accountCheckedAt = Date.now();
 function refreshAccountSoon() {
   if (!account.server || !account.user || Date.now() - accountCheckedAt < 60e3) return;
   accountCheckedAt = Date.now();
-  refreshAccount().then(render).catch(() => {});
+  // Only redraw the plan bars, so half-filled forms on the page are kept.
+  refreshAccount().then(() => {
+    for (const bar of document.querySelectorAll('.plan-bar')) bar.outerHTML = planBarHTML();
+  }).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAccountSoon(); });
 (function atUtcMidnight() {

@@ -96,7 +96,7 @@ function adsToday(userId) {
 }
 function userJSON(u, settings) {
   if (!u) return null;
-  return { id: u.id, email: u.email, name: u.name, role: u.role, perms: permsOf(u), credits: u.credits, proUntil: u.pro_until, pro: u.pro_until > Date.now(), adsLeft: Math.max(0, settings.adsPerDay - adsToday(u.id)) };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, perms: permsOf(u), credits: u.credits, proUntil: u.pro_until, pro: u.pro_until > Date.now(), serverNow: Date.now(), adsLeft: Math.max(0, settings.adsPerDay - adsToday(u.id)) };
 }
 function configJSON(settings) {
   return {
@@ -108,9 +108,11 @@ function configJSON(settings) {
 const SETTING_SECTIONS = { plans: ['welcomeCredits', 'adCredits', 'adsPerDay', 'adSeconds', 'prices'], gateway: ['gateway', 'sslcommerz'], ai: ['ai'] };
 const unlimited = u => can(u, 'unlimited') || u.pro_until > Date.now();
 
+// Behind your own proxy (TRUST_PROXY=1) the client is the last address the proxy appended.
+const clientIp = req => (process.env.TRUST_PROXY === '1' && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress || '';
 const attempts = new Map(); // ip -> [timestamps of failed logins]
 function limitLogin(req) {
-  const ip = req.socket.remoteAddress || '';
+  const ip = clientIp(req);
   const now = Date.now();
   const list = (attempts.get(ip) || []).filter(t => now - t < 15 * 60e3);
   attempts.set(ip, list);
@@ -119,7 +121,7 @@ function limitLogin(req) {
 }
 const signups = new Map(); // ip -> [timestamps of new accounts]
 function limitSignup(req) {
-  const ip = req.socket.remoteAddress || '';
+  const ip = clientIp(req);
   const now = Date.now();
   const list = (signups.get(ip) || []).filter(t => now - t < 60 * 60e3);
   signups.set(ip, list);
