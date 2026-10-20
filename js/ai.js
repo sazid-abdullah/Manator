@@ -136,6 +136,7 @@ function isModelGone(err) {
 }
 
 function aiReady() {
+  if (account.server) return !!account.user && !!account.config.ai.ready;
   const p = AI_PROVIDERS[db.ai.provider];
   return !!p && (!p.needsKey || !!(db.ai.keys[db.ai.provider] || '').trim());
 }
@@ -158,6 +159,7 @@ async function readError(res) {
 }
 
 async function callAI(system, user, opts) {
+  if (account.server) return serverAI(system, user, opts);
   const provider = db.ai.provider;
   const c = cachedModels(provider);
   if (!c || Date.now() - c.at > MODEL_CACHE_MS) await fetchModelList(provider).catch(() => {});
@@ -492,7 +494,7 @@ function repairJSON(t) {
 // One automatic retry, since a malformed JSON reply is usually a one-off.
 async function callAIJSON(system, user, opts) {
   for (let i = 0; ; i++) {
-    const reply = await callAI(system, user, i ? { ...opts, temperature: 0 } : opts);
+    const reply = await callAI(system, user, i ? { ...opts, temperature: 0, retryOf: aiLastRequest } : opts);
     try { return parseJSONReply(reply); } catch (err) {
       console.warn('Unreadable AI reply from', aiLastModel, String(reply).slice(0, 2000));
       if (i) { err.message = `The AI's reply (${aiLastModel}) wasn't in the expected format, even on a second try. Press Try again, or choose another model in Settings → AI.`; throw err; }

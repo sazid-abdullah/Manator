@@ -1,0 +1,11 @@
+{
+  "name": "manator",
+  "private": true,
+  "description": "Manator tuition manager: static PWA plus an optional account/AI/payments server.",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

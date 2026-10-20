@@ -151,7 +151,10 @@ function render() {
       if (query.get('student')) prefillAIStudent(query.get('student'));
       if (query.toString()) { history.replaceState(null, '', '#/ai'); }
       html = viewAI(); after = bindAI; break;
-    case 'settings': html = viewSettings(); after = bindSettings; break;
+    case 'settings':
+      if (query.has('paid')) { paymentReturned(query.get('paid')); history.replaceState(null, '', '#/settings'); }
+      html = viewSettings(); after = bindSettings; break;
+    case 'admin': html = viewAdmin(); after = bindAdmin; break;
     case 'exam': html = viewExam(parts[1]); after = bindExam; break;
     case 'result': html = viewResult(parts[1]); after = bindResult; break;
     default: html = viewHome();
@@ -821,7 +824,7 @@ function bindMoney() {
 
 async function askMoneyAI(q) {
   if (!q || ui.moneyBusy) return;
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+  if (needAI()) return;
   ui.moneyQ = q;
   ui.moneyBusy = true;
   render();
@@ -1014,8 +1017,9 @@ function viewAI() {
   const p = AI_PROVIDERS[db.ai.provider];
   const ready = aiReady();
   const tool = ui.aiTool in AI_TOOLS ? ui.aiTool : 'plan';
-  const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${esc(p.name)} · ${esc(aiModel())}</div></div></div>
-    ${ready ? '' : `<div class="notice warn">Connect a free AI provider first: <a href="#/settings">Settings → AI</a>. Google Gemini's free key takes a minute to create.</div>`}
+  const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${account.server ? 'Manator AI' : `${esc(p.name)} · ${esc(aiModel())}`}</div></div></div>
+    ${ready || account.server ? '' : `<div class="notice warn">Connect a free AI provider first: <a href="#/settings">Settings → AI</a>. Google Gemini's free key takes a minute to create.</div>`}
+    ${planBarHTML()}
     <div class="seg" id="ai-tools" style="margin-bottom:16px">${Object.entries(AI_TOOLS).map(([k, v]) => `<button data-tool="${k}" class="${tool === k ? 'active' : ''}">${v}</button>`).join('')}</div>`;
   if (tool === 'results') {
     const ats = db.attempts.filter(a => !ui.docsStudent || a.studentId === ui.docsStudent).sort((a, b) => b.startedAt - a.startedAt);
@@ -1035,7 +1039,7 @@ function viewAI() {
   const r = ui.aiResult && ui.aiResult.tool === tool ? ui.aiResult : null;
   return head + `<div class="card"><form class="form" id="ai-form">${aiFormHTML(tool)}
       <div class="form-actions"><button class="btn primary" id="ai-go"${ui.aiBusy ? ' disabled' : ''}>${ui.aiBusy ? `<span class="spinner"></span> ${esc(ui.aiBusy)}` : `Generate ${AI_TOOLS[tool].toLowerCase()}`}</button></div></form></div>
-    <div id="ai-output">${r ? aiResultHTML(r) : ''}</div>`;
+    <div id="ai-output">${r ? aiResultHTML(r) : ''}</div>${adSlotHTML()}`;
 }
 
 function aiResultHTML(r) {
@@ -1135,7 +1139,7 @@ function bindAI() {
 }
 
 async function generateAI(d, tool) {
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+  if (needAI()) return;
   if (ui.aiBusy) return;
   const f = { ...d };
   if (tool === 'exam' && !f.topics && !aiSources(tool).length && !f.sourceText) return toast('Add the topics to test, or attach a past paper', 'error');
@@ -1258,7 +1262,7 @@ async function pdfText(bytes) {
 
 async function prepareSources(tool, f) {
   const src = { files: [], fileNames: [], texts: [], mode: f.sourceMode === 'only' ? 'only' : 'style' };
-  const gemini = db.ai.provider === 'gemini';
+  const gemini = aiCanReadFiles();
   for (const x of aiSources(tool)) {
     if (x.kind === 'text') src.texts.push({ name: x.name, text: x.text });
     else if (gemini) {
@@ -1572,7 +1576,7 @@ function openExamSetup(doc, opts) {
       <p class="help" style="margin-top:8px">Only the paper's text is sent to the AI.</p><div class="notice err" id="ex-err" hidden></div>
       <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ex-prep">Prepare exam</button></div>`, body => {
       body.querySelector('#ex-prep').onclick = async e => {
-        if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+        if (needAI()) return;
         const btn = e.currentTarget;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
@@ -1718,7 +1722,7 @@ async function readPaperToExam(file) {
   if (PAPER_FILES.test(low)) {
     if (file.size > SOURCE_FILE_MAX) throw new Error(`"${file.name}" is too big. PDFs and photos can be up to 14 MB.`);
     const pdf = low.endsWith('.pdf'), bytes = await file.arrayBuffer();
-    if (db.ai.provider === 'gemini') {
+    if (aiCanReadFiles()) {
       const photo = !pdf && await photoPage(file);
       if (photo) {
         files = [{ mimeType: 'image/jpeg', data: photo.toDataURL('image/jpeg', 0.92).split(',')[1] }];
@@ -1846,7 +1850,7 @@ function examToMarkdown(ex) {
 function uploadPaperForm(studentId) {
   openModal('Upload question paper', `<form class="form" id="f-upload">
       <label class="field">Question paper *<input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.doc,.txt,.md" required></label>
-      <p class="help" style="margin:0">A PDF, a photo of the paper, a Word file or a text file. The AI reads it once and turns it into an on-screen exam with tap-to-answer MCQs and answer boxes. ${db.ai.provider === 'gemini' ? 'Scanned PDFs and photos work too, and diagrams, graphs and other pictures in the questions are cut out and shown in the exam.' : 'Only Google Gemini can read photos and scanned PDFs, and show the pictures in questions (Settings → AI).'} The whole file is sent to the AI, so remove students' names first.</p>
+      <p class="help" style="margin:0">A PDF, a photo of the paper, a Word file or a text file. The AI reads it once and turns it into an on-screen exam with tap-to-answer MCQs and answer boxes. ${aiCanReadFiles() ? 'Scanned PDFs and photos work too, and diagrams, graphs and other pictures in the questions are cut out and shown in the exam.' : 'Only Google Gemini can read photos and scanned PDFs, and show the pictures in questions (Settings → AI).'} The whole file is sent to the AI, so remove students' names first.</p>
       <label class="field">Title<input name="title" placeholder="Taken from the paper if empty"></label>
       <label class="field">Student (optional)<select name="studentId">${studentOptions(studentId || ui.docsStudent || '', true, 'No student')}</select></label>
       <div class="notice err" id="up-err" hidden></div>
@@ -1857,7 +1861,7 @@ function uploadPaperForm(studentId) {
       e.preventDefault();
       const file = form.file.files[0];
       if (!file) return;
-      if (!aiReady()) { closeModal(); toast('Set up an AI provider in Settings first', 'error'); location.hash = '#/settings'; return; }
+      if (needAI()) return;
       const btn = form.querySelector('#up-go'), box = form.querySelector('#up-err');
       btn.disabled = true; box.hidden = true;
       btn.innerHTML = '<span class="spinner"></span> Reading the paper…';
@@ -2212,7 +2216,7 @@ async function aiMarkAttempt(id) {
       .filter(p => p.student_answer),
   })).filter(x => x.parts.length);
   if (!items.length) return toast('No typed answers to mark. Enter the marks for answers written on paper yourself.');
-  if (!aiReady()) { toast('Set up an AI provider in Settings first', 'error'); return; }
+  if (needAI()) return;
   ui.examBusy = 'Marking…';
   render();
   restoreMarkInputs(kept);
@@ -2243,14 +2247,15 @@ function viewSettings() {
   const prov = db.ai.provider;
   const p = AI_PROVIDERS[prov];
   const curOptions = CURRENCIES.includes(db.settings.currency) ? CURRENCIES : [db.settings.currency, ...CURRENCIES];
-  return `<div class="page-head"><div><h1>Settings</h1><div class="sub">Everything is stored only in this browser.</div></div></div>
+  return `<div class="page-head"><div><h1>Settings</h1><div class="sub">${account.server ? 'Students, classes and money are stored only in this browser. Your account only holds AI credits and Pro.' : 'Everything is stored only in this browser.'}</div></div></div>
     <div class="grid">
+      ${planCardHTML()}
       <div class="card"><h2>Profile</h2><form class="form" id="f-profile">
         <div class="form-row"><label class="field">Your name<input name="tutorName" value="${esc(db.settings.tutorName)}" placeholder="Shown in payment reminders"></label>
           <label class="field">Currency<select name="currency">${curOptions.map(c => `<option value="${esc(c)}"${c === db.settings.currency ? ' selected' : ''}>${esc(c.trim())}</option>`).join('')}</select></label></div>
         <div class="form-actions"><button class="btn primary">Save profile</button></div></form></div>
 
-      <div class="card"><h2>AI provider (free)</h2>
+      ${account.server ? '' : `<div class="card"><h2>AI provider (free)</h2>
         <p class="muted small" style="margin-bottom:12px">Only the class, subject, topics and any file or text you attach are sent to the AI. Student names, phone numbers and money are never sent. Your key stays in this browser.</p>
         <form class="form" id="f-ai">
           <label class="field">Provider<select name="provider">${Object.entries(AI_PROVIDERS).map(([k, v]) => `<option value="${k}"${k === prov ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select></label>
@@ -2258,7 +2263,7 @@ function viewSettings() {
           ${p.needsKey ? `<label class="field">API key<input name="key" type="password" autocomplete="off" value="${esc(db.ai.keys[prov] || '')}" placeholder="Paste your ${esc(p.name)} key"></label>` : ''}
           ${modelFieldHTML(prov)}
           <div class="form-actions"><button type="button" class="btn" id="ai-test">Test connection</button><button class="btn primary">Save AI settings</button></div>
-        </form></div>
+        </form></div>`}
 
       <div class="card"><h2>Backup & data</h2>
         <p class="muted small" style="margin-bottom:12px">${db.settings.lastBackup ? `Last backup: ${esc(fmtDate(db.settings.lastBackup.slice(0, 10)))}.` : 'No backup yet.'} Keep a backup file in Google Drive or email it to yourself, and import it to move to a new phone or browser.</p>
@@ -2267,7 +2272,7 @@ function viewSettings() {
           <button class="btn" data-action="export-csv">Export money CSV</button>
           <button class="btn ghost" data-action="load-demo">Load demo data</button>
           <button class="btn danger" data-action="erase-all">Erase all data</button></div>
-        <label class="check" style="margin-top:12px"><input type="checkbox" id="backup-keys"> Include AI keys in the backup file</label></div>
+        ${account.server ? '' : '<label class="check" style="margin-top:12px"><input type="checkbox" id="backup-keys"> Include AI keys in the backup file</label>'}</div>
 
       <div class="card" id="install-card"${installPrompt ? '' : ' hidden'}><h2>Install app</h2><p class="muted small" style="margin-bottom:12px">Add Manator to your home screen; it works offline.</p><button class="btn primary" data-action="install">Install</button></div>
       <p class="muted small">${db.students.length} students · ${db.lessons.length} classes · ${db.payments.length} payments · ${db.docs.length} AI documents</p>
@@ -2298,6 +2303,11 @@ function bindSettings() {
     if (!save()) return; render(); toast('Profile saved');
   };
   const aiForm = document.getElementById('f-ai');
+  if (aiForm) bindAISettings(aiForm);
+  bindBackupImport();
+}
+
+function bindAISettings(aiForm) {
   const storeAI = () => {
     const f = formData(aiForm);
     if (aiForm.key) db.ai.keys[db.ai.provider] = f.key;
@@ -2327,6 +2337,9 @@ function bindSettings() {
       toast(`Connection failed: ${err.message}`, 'error');
     } finally { btn.disabled = false; btn.textContent = 'Test connection'; }
   };
+}
+
+function bindBackupImport() {
   document.getElementById('import-file').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -2465,7 +2478,7 @@ const ACTIONS = {
   'install': async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); },
   'open-doc': d => openDoc(db.docs.find(x => x.id === d.id)),
   'import-doc': () => importDocForm(),
-  'upload-paper': d => uploadPaperForm(d.student),
+  'upload-paper': d => { if (!needAI()) uploadPaperForm(d.student); },
   'ai-save': () => {
     const r = ui.aiResult; if (!r || r.savedId) return;
     const doc = { id: uid(), type: r.tool, title: r.title, content: r.content, studentId: r.studentId, meta: r.meta, createdAt: new Date().toISOString() };
@@ -2507,6 +2520,8 @@ const ACTIONS = {
   },
 };
 
+Object.assign(ACTIONS, ACCOUNT_ACTIONS);
+
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -2523,4 +2538,4 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
 }
 
-render();
+initAccount().then(render);
