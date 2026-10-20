@@ -2,7 +2,7 @@
 const CACHE = 'manator-v17';
 const ASSETS = [
   './', './index.html', './manifest.json', './icons/icon.svg', './css/style.css',
-  './js/store.js', './js/contracts.js', './js/ai.js', './js/plan.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
+  './js/store.js', './js/contracts.js', './js/ai.js', './js/account.js', './js/app.js', './js/vendor/mammoth.browser.min.js',
   './js/vendor/pdfjs/pdf.min.mjs', './js/vendor/pdfjs/pdf.worker.min.mjs',
 ];
 
@@ -20,7 +20,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || /\/(api|pay)\//.test(url.pathname)) return;
   e.respondWith(
     fetch(e.request)
       .then(res => {

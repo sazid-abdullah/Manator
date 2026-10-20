@@ -24,6 +24,24 @@ python3 -m http.server 8000
 
 Or enable GitHub Pages on `main` and open it on your phone; it can be installed as an app (PWA) and works offline (AI needs internet unless you use Ollama).
 
+Opened this way, each tutor pastes their own free AI key (below).
+
+## Server: accounts, AI credits and Pro
+
+`server/` is an optional Node server (Node 22.13+, no npm packages) that serves the same app and adds accounts and paid AI:
+
+```bash
+GEMINI_API_KEY=... npm start   # http://localhost:8787
+```
+
+- **Accounts** – email + password sign-up (scrypt hashes, HTTP-only session cookie). Students, classes and money still stay in the browser; the account only holds AI credits and Pro.
+- **AI on the server** – the server holds the Gemini/Groq/OpenRouter keys, picks a working model with fallback, and charges 1 credit per request (refunded if it fails). Pro and admin are unlimited.
+- **Free credits** – 3 for new accounts, +1 per watched ad (minimum watch time and a daily cap are checked by the server).
+- **Pro** – ৳149/month or ৳1,199/year through SSLCommerz (bKash, Nagad, Rocket, cards), confirmed with SSLCommerz's validation API before Pro is granted. "Test mode" uses a local fake payment page.
+- **Admin** – the first account (or `ADMIN_EMAIL`) gets Settings → Payment settings: prices, credits, ads, gateway, AI keys, users and payments.
+
+Environment: `PORT` (8787), `DATA_DIR` (`./data`, SQLite), `PUBLIC_URL` (needed behind a proxy for SSLCommerz callbacks), `ADMIN_EMAIL`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `SSLCOMMERZ_STORE_ID`, `SSLCOMMERZ_STORE_PASS`. These win over the same keys saved in Payment settings.
+
 ## AI keys
 
 Settings → AI provider. Free keys: [Gemini](https://aistudio.google.com/apikey), [Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys). Keys are stored only in your browser and are left out of backups unless you tick "Include AI keys".

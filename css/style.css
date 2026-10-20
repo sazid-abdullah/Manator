@@ -377,3 +377,10 @@ body.exam-mode #toasts { bottom: 150px; }
 .ad-player .progress { margin-top: 12px; }
 .pay-methods { display: flex; flex-wrap: wrap; gap: 8px; }
 .pay-method { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); }
+
+/* Accounts & admin */
+button.plan-opt { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+.table th, .table td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: middle; }
+.table th { color: var(--muted); font-weight: 600; }
+.table .btn { padding: 4px 8px; font-size: 0.8rem; }
