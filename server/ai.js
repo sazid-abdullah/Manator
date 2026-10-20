@@ -8,7 +8,7 @@ const BASE = {
 const NAMES = { gemini: 'Google Gemini', groq: 'Groq', openrouter: 'OpenRouter' };
 const FALLBACK = { gemini: 'gemini-flash-latest', groq: 'llama-3.3-70b-versatile', openrouter: 'openrouter/free' };
 const LIST_MS = 24 * 3600e3;
-const cache = {}; // provider -> { list, at, blocked: { model: until } }
+const cache = {}; // provider -> { key, list, at, blocked: { model: until } }, reset when the key changes
 
 function modelScore(provider, id) {
   const s = id.toLowerCase();
@@ -62,9 +62,9 @@ async function fetchModelList(provider, key) {
     ids = data.map(m => String(m.id)).filter(id => !/whisper|tts|guard|safety|embed|playai|orpheus|distil|coder|-code\b|code:/.test(id));
   }
   const now = Date.now();
-  const old = cache[provider] || {};
+  const old = cache[provider] && cache[provider].key === key ? cache[provider] : {};
   const blocked = Object.fromEntries(Object.entries(old.blocked || {}).filter(([, until]) => until > now));
-  cache[provider] = { list: rankModels(provider, ids), at: now, blocked };
+  cache[provider] = { key, list: rankModels(provider, ids), at: now, blocked };
   return cache[provider].list;
 }
 
@@ -140,6 +140,7 @@ async function generate(settings, system, user, opts) {
   let lastErr = null, tries = 0;
   for (const provider of list) {
     const key = settings.ai.keys[provider];
+    if (cache[provider] && cache[provider].key !== key) delete cache[provider];
     const c = cache[provider];
     if (!c || Date.now() - c.at > LIST_MS) await fetchModelList(provider, key).catch(() => {});
     const tried = new Set();

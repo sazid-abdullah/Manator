@@ -61,7 +61,6 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'perms'))
 // Only this email can be the owner. The owner adds admins and chooses each admin's rights.
 const OWNER_EMAIL = String(process.env.OWNER_EMAIL || 'abdullahsazid109@gmail.com').trim().toLowerCase();
 const PERMS = ['users', 'credits', 'payments', 'plans', 'gateway', 'ai', 'unlimited'];
-db.prepare("UPDATE users SET role = 'owner', perms = '' WHERE email = ?").run(OWNER_EMAIL);
 db.prepare("UPDATE users SET role = 'user', perms = '' WHERE email != ? AND (role = 'owner' OR (role = 'admin' AND perms = ''))").run(OWNER_EMAIL);
 
 const DEFAULT_SETTINGS = {
@@ -73,7 +72,7 @@ const DEFAULT_SETTINGS = {
     monthly: { label: 'Monthly', amount: 149, days: 30 },
     yearly: { label: 'Yearly', amount: 1199, days: 365 },
   },
-  gateway: 'test',
+  gateway: 'off',
   sslcommerz: { storeId: '', storePass: '', sandbox: true },
   ai: { order: ['gemini', 'groq', 'openrouter'], keys: { gemini: '', groq: '', openrouter: '' } },
 };
@@ -118,16 +117,18 @@ function maskedSettings() {
   return s;
 }
 
-function hashPassword(pw) {
+// Async scrypt runs on the thread pool, so hashing never blocks other requests.
+const scrypt = (pw, salt, len) => new Promise((ok, fail) => crypto.scrypt(pw, salt, len, (e, k) => (e ? fail(e) : ok(k))));
+async function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(pw, salt, 64);
+  const hash = await scrypt(pw, salt, 64);
   return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
-function checkPassword(pw, stored) {
+async function checkPassword(pw, stored) {
   const [kind, salt, hash] = String(stored).split('$');
   if (kind !== 'scrypt' || !salt || !hash) return false;
   const want = Buffer.from(hash, 'base64');
-  const got = crypto.scryptSync(pw, Buffer.from(salt, 'base64'), want.length);
+  const got = await scrypt(pw, Buffer.from(salt, 'base64'), want.length);
   return crypto.timingSafeEqual(want, got);
 }
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');

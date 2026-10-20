@@ -65,7 +65,8 @@ async function serverAI(system, user, opts) {
 const can = p => !!account.user && (account.user.perms || []).includes(p);
 const isStaff = () => !!account.user && (account.user.role === 'owner' || account.user.role === 'admin');
 const roleName = u => (u.role === 'owner' ? 'Owner' : 'Admin');
-const unlimitedAI = () => !!account.user && (account.user.pro || can('unlimited'));
+const isPro = () => !!account.user && Number(account.user.proUntil) > Date.now();
+const unlimitedAI = () => !!account.user && (isPro() || can('unlimited'));
 function aiCanReadFiles() { return account.server ? !!(account.config && account.config.ai.files) : db.ai.provider === 'gemini'; }
 
 // Call before starting any AI action; returns true (and explains why) when it can't run.
@@ -92,7 +93,7 @@ function planBarHTML() {
   if (!u) return `<div class="plan-bar"><span class="badge blue">Free</span><span class="plan-bar-text">Create a free account to use the AI. You get ${plural(c.welcomeCredits, 'free AI credit')}.</span>
     <span class="actions"><button class="btn" data-action="sign-in">Sign in</button><button class="btn primary" data-action="sign-up">Create account</button></span></div>`;
   if (isStaff() && can('unlimited')) return `<div class="plan-bar pro"><span class="badge green">${roleName(u)}</span><span class="plan-bar-text">Unlimited AI. <a href="#/admin">Admin page</a></span></div>`;
-  if (u.pro) return `<div class="plan-bar pro"><span class="badge green">Pro</span><span class="plan-bar-text">Unlimited AI, no ads · until ${esc(proDate())}</span></div>`;
+  if (isPro()) return `<div class="plan-bar pro"><span class="badge green">Pro</span><span class="plan-bar-text">Unlimited AI, no ads · until ${esc(proDate())}</span></div>`;
   return `<div class="plan-bar${u.credits ? '' : ' locked'}"><span class="badge ${u.credits ? 'blue' : 'red'}">${u.credits ? 'Free' : 'AI locked'}</span>
     <span class="plan-bar-text">${esc(creditsText())}. Each AI request uses 1.</span>
     <span class="actions">${u.adsLeft ? `<button class="btn" data-action="watch-ad">Watch ad · +${c.adCredits}</button>` : ''}<button class="btn primary" data-action="go-pro">Go Pro</button></span></div>`;
@@ -111,13 +112,13 @@ function planCardHTML() {
   if (!u) return `<div class="card"><h2>Account</h2><p style="margin-bottom:12px">Sign in to use the AI tools. A free account comes with ${plural(c.welcomeCredits, 'AI credit')}; watch a short ad for more, or go Pro for unlimited AI.</p>
     <div class="actions"><button class="btn" data-action="sign-in">Sign in</button><button class="btn primary" data-action="sign-up">Create account</button></div>
     <p class="help" style="margin-top:10px">Students, classes, money and exams stay in this browser and work without an account.</p></div>`;
-  const badge = isStaff() && can('unlimited') ? `<span class="badge green">${roleName(u)}</span> Unlimited AI.` : u.pro ? `<span class="badge green">Pro</span> Unlimited AI and no ads until <b>${esc(proDate())}</b>.`
+  const badge = isStaff() && can('unlimited') ? `<span class="badge green">${roleName(u)}</span> Unlimited AI.` : isPro() ? `<span class="badge green">Pro</span> Unlimited AI and no ads until <b>${esc(proDate())}</b>.`
     : `<span class="badge ${u.credits ? 'blue' : 'red'}">Free</span> ${esc(creditsText())}. Watch a short ad for +${plural(c.adCredits, 'credit')} (${u.adsLeft} of ${c.adsPerDay} left today), or go Pro for unlimited AI.`;
   return `<div class="card"><h2>Account</h2>
     <p class="muted small" style="margin-bottom:8px">Signed in as <b>${esc(u.email)}</b></p>
     <p style="margin-bottom:12px">${badge}</p>
     <div class="actions">${unlimitedAI() ? '' : `<button class="btn" data-action="watch-ad"${u.adsLeft ? '' : ' disabled'}>Watch ad · +${c.adCredits}</button>`}
-      ${isStaff() && can('unlimited') ? '' : `<button class="btn primary" data-action="go-pro">${u.pro ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>`}
+      ${isStaff() && can('unlimited') ? '' : `<button class="btn primary" data-action="go-pro">${isPro() ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>`}
       ${isStaff() ? '<a class="btn" href="#/admin">Admin page</a>' : ''}
       <button class="btn ghost" data-action="sign-out">Sign out</button></div>
     <p class="help" style="margin-top:10px">The AI runs on Manator's server. Only the class, subject, topics and any file or text you attach are sent; student names, phone numbers and money never leave this browser.</p></div>`;
@@ -129,7 +130,7 @@ function openAuth(mode) {
       ${up ? `<p class="muted small">Free accounts get ${plural(account.config.welcomeCredits, 'AI credit')}. Your students and classes stay in this browser.</p><label class="field">Name<input name="name" autocomplete="name"></label>` : ''}
       <label class="field">Email<input name="email" type="email" required autocomplete="email"></label>
       <label class="field">Password<input name="password" type="password" required minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}"${up ? ' placeholder="At least 8 characters"' : ''}></label>
-      ${up ? '<label class="field" id="auth-code" hidden>Owner setup code<input name="setupCode" autocomplete="off" placeholder="Shown in the server log"></label>' : ''}
+      ${'<label class="field" id="auth-code" hidden>Owner setup code<input name="setupCode" autocomplete="off" placeholder="Shown in the server log"></label>'}
       <div class="notice err" id="auth-err" hidden></div>
       <div class="form-actions"><button type="button" class="btn ghost" id="auth-switch">${up ? 'I have an account' : 'Create an account'}</button><button class="btn primary" id="auth-go">${up ? 'Create account' : 'Sign in'}</button></div>
     </form>`, body => {
@@ -201,6 +202,7 @@ async function openRewardedAd() {
 
 function openCheckout(planId) {
   if (!account.user) return openAuth('signin');
+  if (account.config.gateway === 'off') { closeModal(); toast('Pro payments are not open yet. Watch an ad for a free credit.', 'error'); return; }
   const c = account.config;
   planId = c.prices[planId] ? planId : 'monthly';
   const amount = () => `৳${Number(c.prices[planId].amount).toLocaleString('en-US')}`;
@@ -262,7 +264,7 @@ function viewAdmin() {
         <label class="field">Ads per day<input name="adsPerDay" type="number" min="0" value="${s.adsPerDay}"></label>
         <label class="field">Ad length (seconds)<input name="adSeconds" type="number" min="5" max="120" value="${s.adSeconds}"></label></div></div></div>`);
   if (can('gateway')) cards.push(`<div class="card"><h2>Payment gateway</h2><div class="form">
-      <label class="field">Gateway<select name="gateway"><option value="test"${s.gateway === 'test' ? ' selected' : ''}>Test mode (no real money)</option><option value="sslcommerz"${s.gateway === 'sslcommerz' ? ' selected' : ''}>SSLCommerz (bKash, Nagad, Rocket, cards)</option></select></label>
+      <label class="field">Gateway<select name="gateway"><option value="off"${s.gateway === 'off' ? ' selected' : ''}>Off (Pro not on sale)</option><option value="test"${s.gateway === 'test' ? ' selected' : ''}>Test mode (anyone gets Pro free; only for trying it out)</option><option value="sslcommerz"${s.gateway === 'sslcommerz' ? ' selected' : ''}>SSLCommerz (bKash, Nagad, Rocket, cards)</option></select></label>
       <div class="form-row"><label class="field">SSLCommerz store ID<input name="storeId" value="${esc(s.sslcommerz.storeId)}" autocomplete="off"></label>
         ${secret('storePass', s.sslcommerz.storePass, 'SSLCommerz store password')}</div>
       <label class="check"><input type="checkbox" name="sandbox"${s.sslcommerz.sandbox ? ' checked' : ''}> Sandbox (SSLCommerz test account)</label>
@@ -316,6 +318,7 @@ async function setAdmin(email, perms, done) {
 }
 
 function bindAdmin() {
+  if (!account.server || !isStaff()) return;
   if (!admin.data && !admin.error) { loadAdmin(); return; }
   const form = document.getElementById('f-admin');
   if (form) form.onsubmit = async e => {
@@ -371,3 +374,16 @@ const ACCOUNT_ACTIONS = {
     } catch (err) { toast(err.message, 'error'); }
   },
 };
+
+// The server's ad allowance resets at UTC midnight; refresh when the tab comes back or the day changes.
+let accountCheckedAt = Date.now();
+function refreshAccountSoon() {
+  if (!account.server || !account.user || Date.now() - accountCheckedAt < 60e3) return;
+  accountCheckedAt = Date.now();
+  refreshAccount().then(render).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAccountSoon(); });
+(function atUtcMidnight() {
+  const d = new Date(); const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) + 5e3;
+  setTimeout(() => { accountCheckedAt = 0; refreshAccountSoon(); atUtcMidnight(); }, next - Date.now());
+})();

@@ -43,10 +43,12 @@ async function readJSON(req, max) {
 }
 async function readForm(req) { return new URLSearchParams(await readBody(req, BODY_MAX)); }
 
+// X-Forwarded-* headers are only trusted with TRUST_PROXY=1 (set it only behind your own proxy).
 function publicUrl(req) {
   if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, '');
-  const proto = (req.headers['x-forwarded-proto'] || '').split(',')[0] || (req.socket.encrypted ? 'https' : 'http');
-  return `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+  const fwd = process.env.TRUST_PROXY === '1';
+  const proto = (fwd && (req.headers['x-forwarded-proto'] || '').split(',')[0].trim()) || (req.socket.encrypted ? 'https' : 'http');
+  return `${proto}://${(fwd && req.headers['x-forwarded-host']) || req.headers.host}`;
 }
 function cookie(req, name) {
   for (const part of String(req.headers.cookie || '').split(';')) {
@@ -87,7 +89,7 @@ function needOwner(req) {
   return u;
 }
 // Signing up with the owner email needs this code (printed in the server log) until the owner account exists.
-let ownerSetupCode = db.prepare('SELECT 1 FROM users WHERE email = ?').get(OWNER_EMAIL) ? null : (process.env.OWNER_SETUP_CODE || newId(6));
+let ownerSetupCode = db.prepare("SELECT 1 FROM users WHERE email = ? AND role = 'owner'").get(OWNER_EMAIL) ? null : (process.env.OWNER_SETUP_CODE || newId(6));
 const sameText = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 function adsToday(userId) {
   return db.prepare('SELECT COUNT(*) AS n FROM ad_views WHERE user_id = ? AND day = ? AND claimed_at IS NOT NULL').get(userId, today()).n;
@@ -115,6 +117,21 @@ function limitLogin(req) {
   if (list.length >= 10) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
   return () => list.push(now);
 }
+const signups = new Map(); // ip -> [timestamps of new accounts]
+function limitSignup(req) {
+  const ip = req.socket.remoteAddress || '';
+  const now = Date.now();
+  const list = (signups.get(ip) || []).filter(t => now - t < 60 * 60e3);
+  signups.set(ip, list);
+  if (list.length >= 5) throw new HttpError(429, 'Too many new accounts from here. Try again in an hour.');
+  return () => list.push(now);
+}
+// The owner email only becomes owner with the setup code, so changing OWNER_EMAIL never hands an existing account owner rights by itself.
+function checkOwnerCode(b, fail) {
+  if (ownerSetupCode && sameText(String(b.setupCode || '').trim(), ownerSetupCode)) return;
+  fail();
+  throw new HttpError(403, b.setupCode ? 'Wrong setup code. Check the server log for the current code.' : 'This email is reserved for the owner. Enter the setup code from the server log.', { setupCode: true });
+}
 function startSession(req, res, userId) {
   const token = newId(32);
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
@@ -129,19 +146,18 @@ const routes = {
   'POST /api/signup': async (req, res) => {
     const b = await readJSON(req);
     const fail = limitLogin(req);
+    const counted = limitSignup(req);
     const email = cleanEmail(b.email), password = String(b.password || ''), name = String(b.name || '').trim().slice(0, 80);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new HttpError(400, 'Enter a valid email address.');
     if (password.length < 8) throw new HttpError(400, 'Use a password of at least 8 characters.');
     if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) { fail(); throw new HttpError(409, 'An account with this email already exists. Sign in instead.'); }
     const owner = email === OWNER_EMAIL;
-    if (owner && !(ownerSetupCode && sameText(String(b.setupCode || '').trim(), ownerSetupCode))) {
-      fail();
-      throw new HttpError(403, b.setupCode ? 'Wrong setup code. Check the server log for the current code.' : 'This email is reserved for the owner. Enter the setup code from the server log.', { setupCode: true });
-    }
+    if (owner) checkOwnerCode(b, fail);
     const s = getSettings();
     const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(email, name, hashPassword(password), owner ? 'owner' : 'user', Math.max(0, Math.floor(s.welcomeCredits)), Date.now());
+      .run(email, name, await hashPassword(password), owner ? 'owner' : 'user', Math.max(0, Math.floor(s.welcomeCredits)), Date.now());
     if (owner) ownerSetupCode = null;
+    counted();
     startSession(req, res, Number(r.lastInsertRowid));
     return { user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid), s) };
   },
@@ -150,7 +166,13 @@ const routes = {
     const b = await readJSON(req);
     const fail = limitLogin(req);
     const u = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail(b.email));
-    if (!u || !checkPassword(String(b.password || ''), u.pass_hash)) { fail(); throw new HttpError(401, 'Wrong email or password.'); }
+    if (!u || !(await checkPassword(String(b.password || ''), u.pass_hash))) { fail(); throw new HttpError(401, 'Wrong email or password.'); }
+    if (u.email === OWNER_EMAIL && u.role !== 'owner') {
+      checkOwnerCode(b, fail);
+      db.prepare("UPDATE users SET role = 'owner', perms = '' WHERE id = ?").run(u.id);
+      ownerSetupCode = null;
+      Object.assign(u, { role: 'owner', perms: '' });
+    }
     startSession(req, res, u.id);
     return { user: userJSON(u, getSettings()) };
   },
@@ -264,7 +286,7 @@ const routes = {
       adsPerDay: int(b.adsPerDay, 0, 100, cur.adsPerDay),
       adSeconds: int(b.adSeconds, 5, 120, cur.adSeconds),
       prices: {},
-      gateway: ['test', 'sslcommerz'].includes(b.gateway) ? b.gateway : cur.gateway,
+      gateway: ['off', 'test', 'sslcommerz'].includes(b.gateway) ? b.gateway : cur.gateway,
       sslcommerz: { storeId: String((b.sslcommerz && b.sslcommerz.storeId) != null ? b.sslcommerz.storeId : cur.sslcommerz.storeId).trim(), storePass: cur.sslcommerz.storePass, sandbox: b.sslcommerz ? b.sslcommerz.sandbox !== false : cur.sslcommerz.sandbox },
       ai: { order: (Array.isArray(b.ai && b.ai.order) ? b.ai.order : cur.ai.order).filter(p => ['gemini', 'groq', 'openrouter'].includes(p)), keys: { ...cur.ai.keys } },
     };

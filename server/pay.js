@@ -19,8 +19,12 @@ function markPaid(id, ref, method) {
   const pay = db.prepare('SELECT * FROM payments WHERE id = ?').get(id);
   if (!pay) return false;
   const now = Date.now();
-  const r = db.prepare("UPDATE payments SET status = 'paid', paid_at = ?, gateway_ref = ?, method = ? WHERE id = ? AND status = 'pending'").run(now, ref || '', method || '', id);
-  if (r.changes) db.prepare('UPDATE users SET pro_until = MAX(pro_until, ?) + ? WHERE id = ?').run(now, pay.days * 86400e3, pay.user_id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const r = db.prepare("UPDATE payments SET status = 'paid', paid_at = ?, gateway_ref = ?, method = ? WHERE id = ? AND status = 'pending'").run(now, ref || '', method || '', id);
+    if (r.changes) db.prepare('UPDATE users SET pro_until = MAX(pro_until, ?) + ? WHERE id = ?').run(now, pay.days * 86400e3, pay.user_id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
   return true;
 }
 function markFailed(id, status) {
@@ -29,7 +33,7 @@ function markFailed(id, status) {
 
 async function startCheckout(pay, user, settings, publicUrl) {
   if (pay.gateway === 'test') return `/pay/test?id=${encodeURIComponent(pay.id)}`;
-  if (pay.gateway !== 'sslcommerz') throw new Error('No payment gateway is set up.');
+  if (pay.gateway !== 'sslcommerz') { const e = new Error('Pro payments are not open yet.'); e.status = 503; throw e; }
   const c = settings.sslcommerz;
   if (!c.storeId || !c.storePass) { const e = new Error('The payment gateway is not set up yet. Ask the admin.'); e.status = 503; throw e; }
   const body = new URLSearchParams({
@@ -54,7 +58,8 @@ async function verifySSLCommerz(form, settings) {
   if (!pay) return { ok: false, pay: null };
   const status = String(form.get('status') || '');
   const valId = String(form.get('val_id') || '');
-  if (!valId || !/^VALID/.test(status)) { markFailed(pay.id, /CANCEL/.test(status) ? 'cancelled' : 'failed'); return { ok: false, pay }; }
+  // Unverified callbacks never change the payment: it stays pending until a validated one arrives.
+  if (!valId || !/^VALID/.test(status)) return { ok: false, pay };
   const c = settings.sslcommerz;
   const q = new URLSearchParams({ val_id: valId, store_id: c.storeId, store_passwd: c.storePass, v: '1', format: 'json' });
   const res = await fetch(`${SSL_HOST(c.sandbox)}/validator/api/validationserverAPI.php?${q}`);
