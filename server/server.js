@@ -44,14 +44,15 @@ async function readJSON(req, max) {
 async function readForm(req) { return new URLSearchParams(await readBody(req, BODY_MAX)); }
 
 // X-Forwarded-* headers are only trusted with TRUST_PROXY=<number of proxies in front, e.g. 1, or 2 for CDN + proxy>
-// and only when the request itself comes from a loopback or private address (your proxy), never from the internet.
+// and only when the request itself comes from a loopback or private address (your proxy). Only set it when the server
+// can't be reached except through that proxy. The first X-Forwarded-Host is the public host the visitor used.
 const PROXY_HOPS = Math.max(0, parseInt(process.env.TRUST_PROXY, 10) || 0);
 const fromProxy = req => PROXY_HOPS > 0 && /^(::1|127\.|::ffff:127\.|10\.|::ffff:10\.|192\.168\.|::ffff:192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:172\.(1[6-9]|2\d|3[01])\.|f[cd])/i.test(req.socket.remoteAddress || '');
 function publicUrl(req) {
   if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, '');
   const fwd = fromProxy(req);
   const proto = (fwd && (req.headers['x-forwarded-proto'] || '').split(',')[0].trim()) || (req.socket.encrypted ? 'https' : 'http');
-  return `${proto}://${(fwd && req.headers['x-forwarded-host']) || req.headers.host}`;
+  return `${proto}://${(fwd && String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()) || req.headers.host}`;
 }
 function cookie(req, name) {
   for (const part of String(req.headers.cookie || '').split(';')) {
@@ -117,13 +118,16 @@ function clientIp(req) {
   return (fromProxy(req) && list[list.length - PROXY_HOPS]) || req.socket.remoteAddress || '';
 }
 const attempts = new Map(); // ip -> [timestamps of failed logins]
-function limitLogin(req) {
-  const ip = clientIp(req);
+// Failed tries are counted per address and per email, so a faked address can't get unlimited guesses at one account or the owner code.
+function limitLogin(req, email) {
   const now = Date.now();
-  const list = (attempts.get(ip) || []).filter(t => now - t < 15 * 60e3);
-  attempts.set(ip, list);
-  if (list.length >= 10) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
-  return () => list.push(now);
+  const lists = [clientIp(req), email && 'email:' + email].filter(Boolean).map(k => {
+    const list = (attempts.get(k) || []).filter(t => now - t < 15 * 60e3);
+    attempts.set(k, list);
+    return list;
+  });
+  if (lists.some(l => l.length >= 10)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+  return () => lists.forEach(l => l.push(now));
 }
 const signups = new Map(); // ip -> [timestamps of new accounts]
 function limitSignup(req) {
@@ -153,7 +157,7 @@ const routes = {
 
   'POST /api/signup': async (req, res) => {
     const b = await readJSON(req);
-    const fail = limitLogin(req);
+    const fail = limitLogin(req, cleanEmail(b.email));
     const counted = limitSignup(req);
     const email = cleanEmail(b.email), password = String(b.password || ''), name = String(b.name || '').trim().slice(0, 80);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new HttpError(400, 'Enter a valid email address.');
@@ -172,7 +176,7 @@ const routes = {
 
   'POST /api/login': async (req, res) => {
     const b = await readJSON(req);
-    const fail = limitLogin(req);
+    const fail = limitLogin(req, cleanEmail(b.email));
     const u = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail(b.email));
     if (!u || !(await checkPassword(String(b.password || ''), u.pass_hash))) { fail(); throw new HttpError(401, 'Wrong email or password.'); }
     if (u.email === OWNER_EMAIL && u.role !== 'owner') {
