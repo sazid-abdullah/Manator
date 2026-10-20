@@ -34,6 +34,7 @@ async function api(path, body, method) {
     const err = new Error(data.error || `Server error ${res.status}`);
     err.status = res.status;
     if (res.status === 402) err.locked = true;
+    if (data.setupCode) err.setupCode = true;
     throw err;
   }
   if (data.user !== undefined) setAccountUser(data.user);
@@ -61,7 +62,10 @@ async function serverAI(system, user, opts) {
   return d.text;
 }
 
-const unlimitedAI = () => !!account.user && (account.user.pro || account.user.role === 'admin');
+const can = p => !!account.user && (account.user.perms || []).includes(p);
+const isStaff = () => !!account.user && (account.user.role === 'owner' || account.user.role === 'admin');
+const roleName = u => (u.role === 'owner' ? 'Owner' : 'Admin');
+const unlimitedAI = () => !!account.user && (account.user.pro || can('unlimited'));
 function aiCanReadFiles() { return account.server ? !!(account.config && account.config.ai.files) : db.ai.provider === 'gemini'; }
 
 // Call before starting any AI action; returns true (and explains why) when it can't run.
@@ -87,7 +91,7 @@ function planBarHTML() {
   const u = account.user, c = account.config;
   if (!u) return `<div class="plan-bar"><span class="badge blue">Free</span><span class="plan-bar-text">Create a free account to use the AI. You get ${plural(c.welcomeCredits, 'free AI credit')}.</span>
     <span class="actions"><button class="btn" data-action="sign-in">Sign in</button><button class="btn primary" data-action="sign-up">Create account</button></span></div>`;
-  if (u.role === 'admin') return `<div class="plan-bar pro"><span class="badge green">Admin</span><span class="plan-bar-text">Unlimited AI. <a href="#/admin">Payment settings</a></span></div>`;
+  if (isStaff() && can('unlimited')) return `<div class="plan-bar pro"><span class="badge green">${roleName(u)}</span><span class="plan-bar-text">Unlimited AI. <a href="#/admin">Admin page</a></span></div>`;
   if (u.pro) return `<div class="plan-bar pro"><span class="badge green">Pro</span><span class="plan-bar-text">Unlimited AI, no ads · until ${esc(proDate())}</span></div>`;
   return `<div class="plan-bar${u.credits ? '' : ' locked'}"><span class="badge ${u.credits ? 'blue' : 'red'}">${u.credits ? 'Free' : 'AI locked'}</span>
     <span class="plan-bar-text">${esc(creditsText())}. Each AI request uses 1.</span>
@@ -107,13 +111,14 @@ function planCardHTML() {
   if (!u) return `<div class="card"><h2>Account</h2><p style="margin-bottom:12px">Sign in to use the AI tools. A free account comes with ${plural(c.welcomeCredits, 'AI credit')}; watch a short ad for more, or go Pro for unlimited AI.</p>
     <div class="actions"><button class="btn" data-action="sign-in">Sign in</button><button class="btn primary" data-action="sign-up">Create account</button></div>
     <p class="help" style="margin-top:10px">Students, classes, money and exams stay in this browser and work without an account.</p></div>`;
-  const badge = u.role === 'admin' ? '<span class="badge green">Admin</span> Unlimited AI.' : u.pro ? `<span class="badge green">Pro</span> Unlimited AI and no ads until <b>${esc(proDate())}</b>.`
+  const badge = isStaff() && can('unlimited') ? `<span class="badge green">${roleName(u)}</span> Unlimited AI.` : u.pro ? `<span class="badge green">Pro</span> Unlimited AI and no ads until <b>${esc(proDate())}</b>.`
     : `<span class="badge ${u.credits ? 'blue' : 'red'}">Free</span> ${esc(creditsText())}. Watch a short ad for +${plural(c.adCredits, 'credit')} (${u.adsLeft} of ${c.adsPerDay} left today), or go Pro for unlimited AI.`;
   return `<div class="card"><h2>Account</h2>
     <p class="muted small" style="margin-bottom:8px">Signed in as <b>${esc(u.email)}</b></p>
     <p style="margin-bottom:12px">${badge}</p>
     <div class="actions">${unlimitedAI() ? '' : `<button class="btn" data-action="watch-ad"${u.adsLeft ? '' : ' disabled'}>Watch ad · +${c.adCredits}</button>`}
-      ${u.role === 'admin' ? '<a class="btn primary" href="#/admin">Payment settings</a>' : `<button class="btn primary" data-action="go-pro">${u.pro ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>`}
+      ${isStaff() && can('unlimited') ? '' : `<button class="btn primary" data-action="go-pro">${u.pro ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>`}
+      ${isStaff() ? '<a class="btn" href="#/admin">Admin page</a>' : ''}
       <button class="btn ghost" data-action="sign-out">Sign out</button></div>
     <p class="help" style="margin-top:10px">The AI runs on Manator's server. Only the class, subject, topics and any file or text you attach are sent; student names, phone numbers and money never leave this browser.</p></div>`;
 }
@@ -124,6 +129,7 @@ function openAuth(mode) {
       ${up ? `<p class="muted small">Free accounts get ${plural(account.config.welcomeCredits, 'AI credit')}. Your students and classes stay in this browser.</p><label class="field">Name<input name="name" autocomplete="name"></label>` : ''}
       <label class="field">Email<input name="email" type="email" required autocomplete="email"></label>
       <label class="field">Password<input name="password" type="password" required minlength="8" autocomplete="${up ? 'new-password' : 'current-password'}"${up ? ' placeholder="At least 8 characters"' : ''}></label>
+      ${up ? '<label class="field" id="auth-code" hidden>Owner setup code<input name="setupCode" autocomplete="off" placeholder="Shown in the server log"></label>' : ''}
       <div class="notice err" id="auth-err" hidden></div>
       <div class="form-actions"><button type="button" class="btn ghost" id="auth-switch">${up ? 'I have an account' : 'Create an account'}</button><button class="btn primary" id="auth-go">${up ? 'Create account' : 'Sign in'}</button></div>
     </form>`, body => {
@@ -136,7 +142,10 @@ function openAuth(mode) {
         await api(up ? 'api/signup' : 'api/login', formData(form));
         closeModal(); render();
         toast(up ? `Welcome! You have ${creditsText()}.` : 'Signed in');
-      } catch (err) { box.textContent = err.message; box.hidden = false; go.disabled = false; }
+      } catch (err) {
+        box.textContent = err.message; box.hidden = false; go.disabled = false;
+        if (err.setupCode) body.querySelector('#auth-code').hidden = false;
+      }
     };
   });
 }
@@ -227,76 +236,119 @@ async function paymentReturned(ok) {
   else toast('The payment was not completed. You have not been charged for Pro.', 'error');
 }
 
-// ── Admin: payment settings, users and payments ──────────────
+// ── Admin page: settings, users, payments, and (owner only) admins ──
+const PERM_LABELS = { users: 'See users', credits: 'Give credits or Pro', payments: 'See payments', plans: 'Edit prices and free credits', gateway: 'Edit payment gateway', ai: 'Edit AI keys', unlimited: 'Unlimited AI for themselves' };
 const admin = { data: null, error: '' };
+const permBoxes = perms => `<div class="perm-grid">${Object.entries(PERM_LABELS).map(([k, l]) => `<label class="check"><input type="checkbox" name="perm" value="${k}"${perms.includes(k) ? ' checked' : ''}> ${l}</label>`).join('')}</div>`;
+const checkedPerms = form => [...form.querySelectorAll('input[name="perm"]:checked')].map(i => i.value);
+
 function viewAdmin() {
-  if (!account.server || !account.user || account.user.role !== 'admin') return '<div class="empty">Only the admin can open this page. <a href="#/settings">Back to settings</a></div>';
-  const d = admin.data;
-  const head = '<div class="page-head"><div><h1>Payment settings</h1><div class="sub">Prices, free credits, the payment gateway and the AI keys. Only you can see this page.</div></div></div>';
+  if (!account.server || !isStaff()) return '<div class="empty">Only admins can open this page. <a href="#/settings">Back to settings</a></div>';
+  const owner = account.user.role === 'owner';
+  const head = `<div class="page-head"><div><h1>Admin</h1><div class="sub">${owner ? 'You are the owner: you have every right and choose what each admin can do.'
+    : `Your rights: ${esc(account.user.perms.map(p => PERM_LABELS[p]).join(', ') || 'none')}. The owner can change them.`}</div></div></div>`;
   if (admin.error) return head + `<div class="notice err">${esc(admin.error)}</div>`;
+  const d = admin.data;
   if (!d) return head + '<div class="empty"><span class="spinner"></span></div>';
-  const s = d.settings;
+  const s = d.settings || {};
   const secret = (name, v, label) => `<label class="field">${label}<input name="${name}" type="password" autocomplete="off" placeholder="${v.set ? `Saved (ends in ${esc(v.hint)}). Type to replace.` : 'Not set'}"></label>`;
   const day = t => t ? esc(fmtDate(toISO(new Date(t)))) : '';
-  return head + `<form class="grid" id="f-admin">
-    <div class="card"><h2>Plans & free credits</h2><div class="form">
+  const cards = [];
+  if (can('plans')) cards.push(`<div class="card"><h2>Plans & free credits</h2><div class="form">
       <div class="form-row"><label class="field">Pro monthly price (৳)<input name="monthly" type="number" min="1" value="${s.prices.monthly.amount}"></label>
         <label class="field">Pro yearly price (৳)<input name="yearly" type="number" min="1" value="${s.prices.yearly.amount}"></label></div>
       <div class="form-row"><label class="field">Credits for new accounts<input name="welcomeCredits" type="number" min="0" value="${s.welcomeCredits}"></label>
         <label class="field">Credits per ad<input name="adCredits" type="number" min="0" value="${s.adCredits}"></label>
         <label class="field">Ads per day<input name="adsPerDay" type="number" min="0" value="${s.adsPerDay}"></label>
-        <label class="field">Ad length (seconds)<input name="adSeconds" type="number" min="5" max="120" value="${s.adSeconds}"></label></div></div></div>
-    <div class="card"><h2>Payment gateway</h2><div class="form">
+        <label class="field">Ad length (seconds)<input name="adSeconds" type="number" min="5" max="120" value="${s.adSeconds}"></label></div></div></div>`);
+  if (can('gateway')) cards.push(`<div class="card"><h2>Payment gateway</h2><div class="form">
       <label class="field">Gateway<select name="gateway"><option value="test"${s.gateway === 'test' ? ' selected' : ''}>Test mode (no real money)</option><option value="sslcommerz"${s.gateway === 'sslcommerz' ? ' selected' : ''}>SSLCommerz (bKash, Nagad, Rocket, cards)</option></select></label>
       <div class="form-row"><label class="field">SSLCommerz store ID<input name="storeId" value="${esc(s.sslcommerz.storeId)}" autocomplete="off"></label>
         ${secret('storePass', s.sslcommerz.storePass, 'SSLCommerz store password')}</div>
       <label class="check"><input type="checkbox" name="sandbox"${s.sslcommerz.sandbox ? ' checked' : ''}> Sandbox (SSLCommerz test account)</label>
-      <p class="help">Get a free sandbox store at developer.sslcommerz.com. For real payments, untick Sandbox and use your live store ID after SSLCommerz approves your business.</p></div></div>
-    <div class="card"><h2>AI keys</h2><div class="form">
+      <p class="help">Get a free sandbox store at developer.sslcommerz.com. For real payments, untick Sandbox and use your live store ID after SSLCommerz approves your business.</p></div></div>`);
+  if (can('ai')) cards.push(`<div class="card"><h2>AI keys</h2><div class="form">
       <p class="help">Every user's AI requests run on these keys. The server tries the providers in this order and moves on when one is busy or out of quota. Only Gemini reads PDFs and photos.</p>
       <label class="field">Order<input name="order" value="${esc(s.ai.order.join(', '))}"></label>
       ${['gemini', 'groq', 'openrouter'].map(p => `<div class="form-row" style="align-items:end">${secret(`key_${p}`, s.ai.keys[p], `${{ gemini: 'Google Gemini', groq: 'Groq', openrouter: 'OpenRouter' }[p]} key${d.env.aiKeys.includes(p) ? ' (set on the server)' : ''}`)}
-        <div class="actions"><button type="button" class="btn" data-action="admin-ai-test" data-provider="${p}">Test</button></div></div>`).join('')}</div></div>
-    <div class="form-actions"><button class="btn primary">Save settings</button></div></form>
-    <div class="section"><h2>Users (${d.users.length})</h2><div class="card table-wrap"><table class="table"><thead><tr><th>Email</th><th>Plan</th><th>Credits</th><th>AI requests</th><th>Joined</th><th></th></tr></thead><tbody>
-      ${d.users.map(u => `<tr><td>${esc(u.email)}</td><td>${u.role === 'admin' ? 'Admin' : u.pro ? `Pro until ${day(u.proUntil)}` : 'Free'}</td><td>${u.credits}</td><td>${u.aiRequests}</td><td>${day(u.createdAt)}</td>
-        <td class="nowrap"><button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-add-credits="5">+5 credits</button><button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-add-pro-days="30">+30 days Pro</button>${u.pro ? `<button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-end-pro="1">End Pro</button>` : ''}</td></tr>`).join('')}
-    </tbody></table></div></div>
-    <div class="section"><h2>Payments</h2><div class="card table-wrap">${d.payments.length ? `<table class="table"><thead><tr><th>Date</th><th>Email</th><th>Plan</th><th>Amount</th><th>Gateway</th><th>Status</th></tr></thead><tbody>
+        <div class="actions"><button type="button" class="btn" data-action="admin-ai-test" data-provider="${p}">Test</button></div></div>`).join('')}</div></div>`);
+  const planOf = u => u.role === 'owner' ? 'Owner' : [u.role === 'admin' ? 'Admin' : '', u.pro ? `Pro until ${day(u.proUntil)}` : u.role === 'admin' ? '' : 'Free'].filter(Boolean).join(' · ');
+  return head + (cards.length ? `<form class="grid" id="f-admin">${cards.join('')}<div class="form-actions"><button class="btn primary">Save settings</button></div></form>` : '')
+    + (d.users ? `<div class="section"><h2>Users (${d.users.length})</h2><div class="card table-wrap"><table class="table"><thead><tr><th>Email</th><th>Plan</th><th>Credits</th><th>AI requests</th><th>Joined</th>${can('credits') ? '<th></th>' : ''}</tr></thead><tbody>
+      ${d.users.map(u => `<tr><td>${esc(u.email)}</td><td>${planOf(u)}</td><td>${u.credits}</td><td>${u.aiRequests}</td><td>${day(u.createdAt)}</td>
+        ${can('credits') ? `<td class="nowrap"><button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-add-credits="5">+5 credits</button><button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-add-pro-days="30">+30 days Pro</button>${u.pro ? `<button class="btn ghost" data-action="admin-user" data-id="${u.id}" data-end-pro="1">End Pro</button>` : ''}</td>` : ''}</tr>`).join('')}
+    </tbody></table></div></div>` : '')
+    + (d.payments ? `<div class="section"><h2>Payments</h2><div class="card table-wrap">${d.payments.length ? `<table class="table"><thead><tr><th>Date</th><th>Email</th><th>Plan</th><th>Amount</th><th>Gateway</th><th>Status</th></tr></thead><tbody>
       ${d.payments.map(p => `<tr><td>${day(p.created_at)}</td><td>${esc(p.email)}</td><td>${esc(p.plan)}</td><td>৳${esc(p.amount)}</td><td>${esc(p.gateway)}${p.method ? ` · ${esc(p.method)}` : ''}</td><td><span class="badge ${p.status === 'paid' ? 'green' : p.status === 'pending' ? 'yellow' : 'red'}">${esc(p.status)}</span></td></tr>`).join('')}
-    </tbody></table>` : '<div class="empty">No payments yet.</div>'}</div></div>`;
+    </tbody></table>` : '<div class="empty">No payments yet.</div>'}</div></div>` : '')
+    + (d.admins ? `<div class="section"><h2>Admins (${d.admins.length})</h2><div class="grid">
+      <div class="card"><h3>Add an admin</h3><form class="form" id="f-admin-add">
+        <p class="help">They need a Manator account first. Admins only get the rights you tick, and only you can add or remove admins.</p>
+        <label class="field">Their account email<input name="email" type="email" required autocomplete="off"></label>
+        ${permBoxes([])}
+        <div class="form-actions"><button class="btn primary">Add admin</button></div></form></div>
+      ${d.admins.map(a => `<div class="card"><form class="form f-admin-perms" data-email="${esc(a.email)}"><h3>${esc(a.email)}</h3>${permBoxes(a.perms)}
+        <div class="form-actions"><button type="button" class="btn ghost" data-action="admin-remove" data-email="${esc(a.email)}">Remove admin</button><button class="btn primary">Save rights</button></div></form></div>`).join('')}
+    </div></div>` : '');
 }
 
 async function loadAdmin() {
   try {
-    const [st, us, pa] = await Promise.all([api('api/admin/settings'), api('api/admin/users'), api('api/admin/payments')]);
-    admin.data = { settings: st.settings, env: st.env, users: us.users, payments: pa.payments };
+    await refreshAccount().catch(() => {});
+    if (!isStaff()) { admin.data = null; admin.error = ''; render(); return; }
+    const get = (ok, path) => (ok ? api(path) : Promise.resolve(null));
+    const [st, us, pa, ad] = await Promise.all([
+      get(can('plans') || can('gateway') || can('ai'), 'api/admin/settings'), get(can('users') || can('credits'), 'api/admin/users'),
+      get(can('payments'), 'api/admin/payments'), get(account.user.role === 'owner', 'api/admin/admins'),
+    ]);
+    admin.data = { settings: st && st.settings, env: st ? st.env : { aiKeys: [] }, users: us && us.users, payments: pa && pa.payments, admins: ad && ad.admins };
     admin.error = '';
   } catch (err) { admin.error = err.message; }
   if (parseHash().parts[0] === 'admin') render();
 }
 
+async function setAdmin(email, perms, done) {
+  try {
+    await api('api/admin/admins', { email, perms });
+    toast(done);
+    admin.data = null; loadAdmin();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 function bindAdmin() {
   if (!admin.data && !admin.error) { loadAdmin(); return; }
   const form = document.getElementById('f-admin');
-  if (!form) return;
-  form.onsubmit = async e => {
+  if (form) form.onsubmit = async e => {
     e.preventDefault();
     const f = formData(form);
     const key = n => (f[n] ? f[n] : '');
+    const body = {};
+    if (can('plans')) Object.assign(body, { welcomeCredits: f.welcomeCredits, adCredits: f.adCredits, adsPerDay: f.adsPerDay, adSeconds: f.adSeconds, prices: { monthly: { amount: f.monthly }, yearly: { amount: f.yearly } } });
+    if (can('gateway')) Object.assign(body, { gateway: f.gateway, sslcommerz: { storeId: f.storeId, storePass: key('storePass'), sandbox: form.sandbox.checked } });
+    if (can('ai')) body.ai = { order: f.order.split(/[\s,]+/).filter(Boolean), keys: { gemini: key('key_gemini'), groq: key('key_groq'), openrouter: key('key_openrouter') } };
     try {
-      const r = await api('api/admin/settings', {
-        welcomeCredits: f.welcomeCredits, adCredits: f.adCredits, adsPerDay: f.adsPerDay, adSeconds: f.adSeconds,
-        prices: { monthly: { amount: f.monthly }, yearly: { amount: f.yearly } }, gateway: f.gateway,
-        sslcommerz: { storeId: f.storeId, storePass: key('storePass'), sandbox: form.sandbox.checked },
-        ai: { order: f.order.split(/[\s,]+/).filter(Boolean), keys: { gemini: key('key_gemini'), groq: key('key_groq'), openrouter: key('key_openrouter') } },
-      }, 'PUT');
+      const r = await api('api/admin/settings', body, 'PUT');
       admin.data.settings = r.settings;
       await refreshAccount().catch(() => {});
       render();
       toast('Settings saved');
     } catch (err) { toast(err.message, 'error'); }
   };
+  const add = document.getElementById('f-admin-add');
+  if (add) add.onsubmit = e => {
+    e.preventDefault();
+    const perms = checkedPerms(add);
+    if (!perms.length) { toast('Tick at least one right for the new admin.', 'error'); return; }
+    setAdmin(add.email.value, perms, 'Admin added');
+  };
+  document.querySelectorAll('.f-admin-perms').forEach(f => {
+    f.onsubmit = e => {
+      e.preventDefault();
+      const perms = checkedPerms(f);
+      if (!perms.length) { toast('Tick at least one right, or use Remove admin.', 'error'); return; }
+      setAdmin(f.dataset.email, perms, 'Rights saved');
+    };
+  });
 }
 
 const ACCOUNT_ACTIONS = {
@@ -310,6 +362,7 @@ const ACCOUNT_ACTIONS = {
     try { const r = await api('api/admin/ai-test', { provider: d.provider }); toast(`Connected: ${r.models} models, ${r.model} replied "${r.reply}"`); } catch (err) { toast(err.message, 'error'); }
     el.disabled = false; el.textContent = 'Test';
   },
+  'admin-remove': d => { if (confirm(`Remove ${d.email} as admin? Their account stays.`)) setAdmin(d.email, [], 'Admin removed'); },
   'admin-user': async d => {
     try {
       await api('api/admin/user', { id: Number(d.id), addCredits: Number(d.addCredits) || 0, addProDays: Number(d.addProDays) || 0, endPro: !!d.endPro });

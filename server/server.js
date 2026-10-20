@@ -3,7 +3,8 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { db, getSettings, saveSettings, maskedSettings, SECRET_PATHS, getAt, setAt, hashPassword, checkPassword, sha256, newId } = require('./db');
+const crypto = require('node:crypto');
+const { db, OWNER_EMAIL, PERMS, savedSettings, getSettings, saveSettings, maskedSettings, SECRET_PATHS, getAt, setAt, hashPassword, checkPassword, sha256, newId } = require('./db');
 const ai = require('./ai');
 const pay = require('./pay');
 
@@ -19,7 +20,7 @@ const BODY_MAX = 256 * 1024;
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => new Date().toISOString().slice(0, 10);
 
-class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+class HttpError extends Error { constructor(status, msg, extra) { super(msg); this.status = status; this.extra = extra; } }
 
 function send(res, status, body, headers) {
   const json = typeof body !== 'string';
@@ -72,17 +73,28 @@ function needUser(req) {
   if (!u) throw new HttpError(401, 'Please sign in first.');
   return u;
 }
-function needAdmin(req) {
+const permsOf = u => (u.role === 'owner' ? PERMS.slice() : u.role === 'admin' ? u.perms.split(',').filter(p => PERMS.includes(p)) : []);
+const can = (u, p) => permsOf(u).includes(p);
+// Signed-in user who has at least one of the given admin rights.
+function needPerm(req, ...anyOf) {
   const u = needUser(req);
-  if (u.role !== 'admin') throw new HttpError(403, 'Only the admin can do this.');
+  if (!anyOf.some(p => can(u, p))) throw new HttpError(403, "You don't have permission to do this.");
   return u;
 }
+function needOwner(req) {
+  const u = needUser(req);
+  if (u.role !== 'owner') throw new HttpError(403, 'Only the owner can do this.');
+  return u;
+}
+// Signing up with the owner email needs this code (printed in the server log) until the owner account exists.
+let ownerSetupCode = db.prepare('SELECT 1 FROM users WHERE email = ?').get(OWNER_EMAIL) ? null : (process.env.OWNER_SETUP_CODE || newId(6));
+const sameText = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 function adsToday(userId) {
   return db.prepare('SELECT COUNT(*) AS n FROM ad_views WHERE user_id = ? AND day = ? AND claimed_at IS NOT NULL').get(userId, today()).n;
 }
 function userJSON(u, settings) {
   if (!u) return null;
-  return { id: u.id, email: u.email, name: u.name, role: u.role, credits: u.credits, proUntil: u.pro_until, pro: u.pro_until > Date.now(), adsLeft: Math.max(0, settings.adsPerDay - adsToday(u.id)) };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, perms: permsOf(u), credits: u.credits, proUntil: u.pro_until, pro: u.pro_until > Date.now(), adsLeft: Math.max(0, settings.adsPerDay - adsToday(u.id)) };
 }
 function configJSON(settings) {
   return {
@@ -91,7 +103,8 @@ function configJSON(settings) {
     ai: { ready: ai.providers(settings, false).length > 0, files: ai.providers(settings, true).length > 0 },
   };
 }
-const unlimited = u => u.role === 'admin' || u.pro_until > Date.now();
+const SETTING_SECTIONS = { plans: ['welcomeCredits', 'adCredits', 'adsPerDay', 'adSeconds', 'prices'], gateway: ['gateway', 'sslcommerz'], ai: ['ai'] };
+const unlimited = u => can(u, 'unlimited') || u.pro_until > Date.now();
 
 const attempts = new Map(); // ip -> [timestamps of failed logins]
 function limitLogin(req) {
@@ -120,10 +133,15 @@ const routes = {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new HttpError(400, 'Enter a valid email address.');
     if (password.length < 8) throw new HttpError(400, 'Use a password of at least 8 characters.');
     if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) { fail(); throw new HttpError(409, 'An account with this email already exists. Sign in instead.'); }
+    const owner = email === OWNER_EMAIL;
+    if (owner && !(ownerSetupCode && sameText(String(b.setupCode || '').trim(), ownerSetupCode))) {
+      fail();
+      throw new HttpError(403, b.setupCode ? 'Wrong setup code. Check the server log for the current code.' : 'This email is reserved for the owner. Enter the setup code from the server log.', { setupCode: true });
+    }
     const s = getSettings();
-    const admin = process.env.ADMIN_EMAIL ? cleanEmail(process.env.ADMIN_EMAIL) === email : !db.prepare('SELECT 1 FROM users LIMIT 1').get();
     const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(email, name, hashPassword(password), admin ? 'admin' : 'user', Math.max(0, Math.floor(s.welcomeCredits)), Date.now());
+      .run(email, name, hashPassword(password), owner ? 'owner' : 'user', Math.max(0, Math.floor(s.welcomeCredits)), Date.now());
+    if (owner) ownerSetupCode = null;
     startSession(req, res, Number(r.lastInsertRowid));
     return { user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid), s) };
   },
@@ -229,9 +247,14 @@ const routes = {
   },
 
   // ── Admin ──
-  'GET /api/admin/settings': req => { needAdmin(req); return { settings: maskedSettings(), env: { aiKeys: ['gemini', 'groq', 'openrouter'].filter(p => process.env[`${p.toUpperCase()}_API_KEY`]) } }; },
+  'GET /api/admin/settings': req => {
+    const u = needPerm(req, 'plans', 'gateway', 'ai');
+    const s = maskedSettings();
+    for (const [perm, keys] of Object.entries(SETTING_SECTIONS)) if (!can(u, perm)) for (const k of keys) delete s[k];
+    return { settings: s, env: { aiKeys: can(u, 'ai') ? ['gemini', 'groq', 'openrouter'].filter(p => process.env[`${p.toUpperCase()}_API_KEY`]) : [] } };
+  },
   'PUT /api/admin/settings': async req => {
-    needAdmin(req);
+    const u = needPerm(req, 'plans', 'gateway', 'ai');
     const b = await readJSON(req);
     const cur = getSettings();
     const int = (v, lo, hi, d) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
@@ -256,11 +279,14 @@ const routes = {
       const old = getAt(stored, p) || '';
       setAt(next, p, v === null ? '' : typeof v === 'string' && v.trim() ? v.trim() : old);
     }
+    // Sections this admin may not edit keep their saved values.
+    const base = savedSettings();
+    for (const [perm, keys] of Object.entries(SETTING_SECTIONS)) if (!can(u, perm)) for (const k of keys) next[k] = base[k];
     saveSettings(next);
     return { settings: maskedSettings() };
   },
   'POST /api/admin/ai-test': async req => {
-    needAdmin(req);
+    needPerm(req, 'ai');
     const b = await readJSON(req);
     const s = getSettings();
     const p = String(b.provider || '');
@@ -272,12 +298,12 @@ const routes = {
     } catch (err) { throw new HttpError(502, err.message); }
   },
   'GET /api/admin/users': req => {
-    needAdmin(req);
+    needPerm(req, 'users', 'credits');
     const s = getSettings();
     return { users: db.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 500').all().map(u => ({ ...userJSON(u, s), createdAt: u.created_at, aiRequests: db.prepare('SELECT COUNT(*) AS n FROM ai_requests WHERE user_id = ?').get(u.id).n })) };
   },
   'POST /api/admin/user': async req => {
-    needAdmin(req);
+    needPerm(req, 'credits');
     const b = await readJSON(req);
     const u = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(b.id));
     if (!u) throw new HttpError(404, 'User not found.');
@@ -288,8 +314,26 @@ const routes = {
     return { target: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id), getSettings()) };
   },
   'GET /api/admin/payments': req => {
-    needAdmin(req);
+    needPerm(req, 'payments');
     return { payments: db.prepare('SELECT p.*, u.email FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC LIMIT 500').all() };
+  },
+
+  // ── Owner: admins and their rights ──
+  'GET /api/admin/admins': req => {
+    needOwner(req);
+    const s = getSettings();
+    return { admins: db.prepare("SELECT * FROM users WHERE role = 'admin' ORDER BY email").all().map(u => userJSON(u, s)), perms: PERMS };
+  },
+  // Sets an account's admin rights by email; an empty list removes admin.
+  'POST /api/admin/admins': async req => {
+    needOwner(req);
+    const b = await readJSON(req);
+    const t = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail(b.email));
+    if (!t) throw new HttpError(404, 'No account uses this email. Ask them to create an account first.');
+    if (t.role === 'owner') throw new HttpError(400, "The owner's rights can't be changed.");
+    const perms = PERMS.filter(p => Array.isArray(b.perms) && b.perms.includes(p));
+    db.prepare('UPDATE users SET role = ?, perms = ? WHERE id = ?').run(perms.length ? 'admin' : 'user', perms.join(','), t.id);
+    return { target: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(t.id), getSettings()) };
   },
 };
 
@@ -325,8 +369,11 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     if (status === 500) console.error(err);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Something went wrong on the server.' : err.message });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Something went wrong on the server.' : err.message, ...(status === 500 ? {} : err.extra) });
   }
 });
 
-server.listen(PORT, () => console.log(`Manator server on http://localhost:${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Manator server on http://localhost:${PORT}`);
+  if (ownerSetupCode) console.log(`Owner setup code for ${OWNER_EMAIL}: ${ownerSetupCode}`);
+});

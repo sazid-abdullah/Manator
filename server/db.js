@@ -56,6 +56,13 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
+if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'perms')) db.exec("ALTER TABLE users ADD COLUMN perms TEXT NOT NULL DEFAULT ''");
+
+// Only this email can be the owner. The owner adds admins and chooses each admin's rights.
+const OWNER_EMAIL = String(process.env.OWNER_EMAIL || 'abdullahsazid109@gmail.com').trim().toLowerCase();
+const PERMS = ['users', 'credits', 'payments', 'plans', 'gateway', 'ai', 'unlimited'];
+db.prepare("UPDATE users SET role = 'owner', perms = '' WHERE email = ?").run(OWNER_EMAIL);
+db.prepare("UPDATE users SET role = 'user', perms = '' WHERE email != ? AND (role = 'owner' OR (role = 'admin' AND perms = ''))").run(OWNER_EMAIL);
 
 const DEFAULT_SETTINGS = {
   welcomeCredits: 3,
@@ -79,11 +86,15 @@ function merge(base, over) {
   return out;
 }
 
-function getSettings() {
+// Settings as saved in the database, without environment overrides.
+function savedSettings() {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('app');
   let saved = {};
   try { saved = row ? JSON.parse(row.value) : {}; } catch (e) { /* defaults */ }
-  const s = merge(structuredClone(DEFAULT_SETTINGS), saved);
+  return merge(structuredClone(DEFAULT_SETTINGS), saved);
+}
+function getSettings() {
+  const s = savedSettings();
   // Environment variables win over settings saved in the database.
   for (const p of ['gemini', 'groq', 'openrouter']) {
     const env = process.env[`${p.toUpperCase()}_API_KEY`];
@@ -122,4 +133,4 @@ function checkPassword(pw, stored) {
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 const newId = (n = 18) => crypto.randomBytes(n).toString('base64url');
 
-module.exports = { db, DEFAULT_SETTINGS, SECRET_PATHS, getSettings, saveSettings, maskedSettings, getAt, setAt, hashPassword, checkPassword, sha256, newId };
+module.exports = { db, OWNER_EMAIL, PERMS, DEFAULT_SETTINGS, savedSettings, SECRET_PATHS, getSettings, saveSettings, maskedSettings, getAt, setAt, hashPassword, checkPassword, sha256, newId };
