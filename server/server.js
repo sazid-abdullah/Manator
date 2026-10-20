@@ -121,14 +121,18 @@ const attempts = new Map(); // ip -> [timestamps of failed logins]
 // Failed tries are counted per address and per email, so a faked address can't get unlimited guesses at one account or the owner code.
 function limitLogin(req, email) {
   const now = Date.now();
-  const lists = [clientIp(req), email && 'email:' + email].filter(Boolean).map(k => {
-    const list = (attempts.get(k) || []).filter(t => now - t < 15 * 60e3);
-    attempts.set(k, list);
-    return list;
-  });
-  if (lists.some(l => l.length >= 10)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
-  return () => lists.forEach(l => l.push(now));
+  const keys = [clientIp(req), /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(email || '') && 'email:' + email].filter(Boolean);
+  const recent = k => (attempts.get(k) || []).filter(t => now - t < 15 * 60e3);
+  if (keys.some(k => recent(k).length >= 10)) throw new HttpError(429, 'Too many tries. Wait 15 minutes and try again.');
+  // Only failed tries create entries, and the sweep below drops expired ones.
+  return () => keys.forEach(k => attempts.set(k, [...recent(k), now]));
 }
+setInterval(() => {
+  const now = Date.now();
+  for (const [map, ms] of [[attempts, 15 * 60e3], [signups, 60 * 60e3]]) {
+    for (const [k, list] of map) { const left = list.filter(t => now - t < ms); if (left.length) map.set(k, left); else map.delete(k); }
+  }
+}, 5 * 60e3).unref();
 const signups = new Map(); // ip -> [timestamps of new accounts]
 function limitSignup(req) {
   const ip = clientIp(req);
