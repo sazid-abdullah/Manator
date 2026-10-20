@@ -8,7 +8,7 @@ async function initAccount() {
     const r = await fetch('api/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) });
     if (r.ok && /json/.test(r.headers.get('content-type') || '')) {
       const d = await r.json();
-      Object.assign(account, { server: true, user: d.user, config: d.config });
+      Object.assign(account, { server: true, user: d.user, config: d.config, skew: d.user && d.user.serverNow ? d.user.serverNow - Date.now() : 0 });
       localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ user: d.user, config: d.config }));
       return;
     }
@@ -107,8 +107,8 @@ function adSlotHTML() {
     <button class="btn ghost" data-action="go-pro">Remove ads</button></div>`;
 }
 
-function planCardHTML() {
-  if (!account.server) return '';
+function planCardHTML() { return account.server ? `<div id="plan-card">${planCardInner()}</div>` : ''; }
+function planCardInner() {
   const u = account.user, c = account.config;
   if (!u) return `<div class="card"><h2>Account</h2><p style="margin-bottom:12px">Sign in to use the AI tools. A free account comes with ${plural(c.welcomeCredits, 'AI credit')}; watch a short ad for more, or go Pro for unlimited AI.</p>
     <div class="actions"><button class="btn" data-action="sign-in">Sign in</button><button class="btn primary" data-action="sign-up">Create account</button></div>
@@ -381,9 +381,11 @@ let accountCheckedAt = Date.now();
 function refreshAccountSoon() {
   if (!account.server || !account.user || Date.now() - accountCheckedAt < 60e3) return;
   accountCheckedAt = Date.now();
-  // Only redraw the plan bars, so half-filled forms on the page are kept.
+  // Only redraw the plan bar and account card, so half-filled forms on the page are kept.
   refreshAccount().then(() => {
     for (const bar of document.querySelectorAll('.plan-bar')) bar.outerHTML = planBarHTML();
+    const card = document.getElementById('plan-card');
+    if (card) card.outerHTML = planCardHTML();
   }).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAccountSoon(); });

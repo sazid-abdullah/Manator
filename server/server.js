@@ -43,10 +43,13 @@ async function readJSON(req, max) {
 }
 async function readForm(req) { return new URLSearchParams(await readBody(req, BODY_MAX)); }
 
-// X-Forwarded-* headers are only trusted with TRUST_PROXY=1 (set it only behind your own proxy).
+// X-Forwarded-* headers are only trusted with TRUST_PROXY=<number of proxies in front, e.g. 1, or 2 for CDN + proxy>
+// and only when the request itself comes from a loopback or private address (your proxy), never from the internet.
+const PROXY_HOPS = Math.max(0, parseInt(process.env.TRUST_PROXY, 10) || 0);
+const fromProxy = req => PROXY_HOPS > 0 && /^(::1|127\.|::ffff:127\.|10\.|::ffff:10\.|192\.168\.|::ffff:192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:172\.(1[6-9]|2\d|3[01])\.|f[cd])/i.test(req.socket.remoteAddress || '');
 function publicUrl(req) {
   if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, '');
-  const fwd = process.env.TRUST_PROXY === '1';
+  const fwd = fromProxy(req);
   const proto = (fwd && (req.headers['x-forwarded-proto'] || '').split(',')[0].trim()) || (req.socket.encrypted ? 'https' : 'http');
   return `${proto}://${(fwd && req.headers['x-forwarded-host']) || req.headers.host}`;
 }
@@ -108,8 +111,11 @@ function configJSON(settings) {
 const SETTING_SECTIONS = { plans: ['welcomeCredits', 'adCredits', 'adsPerDay', 'adSeconds', 'prices'], gateway: ['gateway', 'sslcommerz'], ai: ['ai'] };
 const unlimited = u => can(u, 'unlimited') || u.pro_until > Date.now();
 
-// Behind your own proxy (TRUST_PROXY=1) the client is the last address the proxy appended.
-const clientIp = req => (process.env.TRUST_PROXY === '1' && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress || '';
+// With trusted proxies, the client is the address the outermost trusted proxy saw (PROXY_HOPS from the right).
+function clientIp(req) {
+  const list = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+  return (fromProxy(req) && list[list.length - PROXY_HOPS]) || req.socket.remoteAddress || '';
+}
 const attempts = new Map(); // ip -> [timestamps of failed logins]
 function limitLogin(req) {
   const ip = clientIp(req);
