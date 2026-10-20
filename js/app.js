@@ -1342,7 +1342,13 @@ function htmlToMarkdown(html) {
       if (n.nodeType === 3) { out += n.textContent.replace(/\s+/g, ' '); return; }
       if (n.nodeType !== 1) return;
       const tag = n.tagName;
-      if (tag === 'UL' || tag === 'OL' || tag === 'IMG') return;
+      if (tag === 'UL' || tag === 'OL' || tag === 'IMG') {
+        if (tag === 'IMG') {
+          const src = n.getAttribute('src');
+          if (src && src.startsWith('*[')) out += `\n${src}\n`;
+        }
+        return;
+      }
       if (tag === 'BR') { out += ' '; return; }
       const inner = inline(n);
       if (tag === 'STRONG' || tag === 'B') out += wrap(inner, '**');
@@ -1400,11 +1406,20 @@ async function readImportFile(file) {
   if (name.endsWith('.docx')) {
     const mammoth = await loadMammoth();
     let skipped = 0;
+    const extractedImages = [];
     const res = await mammoth.convertToHtml(
       { arrayBuffer: await file.arrayBuffer() },
-      { convertImage: mammoth.images.imgElement(() => { skipped++; return Promise.resolve({ src: '' }); }) }
+      { convertImage: mammoth.images.imgElement(image => {
+          return image.read("base64").then(imageBuffer => {
+            extractedImages.push(`data:${image.contentType};base64,${imageBuffer}`);
+            return { src: `*[Picture ${extractedImages.length}]*` };
+          }).catch(() => {
+            skipped++;
+            return { src: '' };
+          });
+      }) }
     );
-    return { content: htmlToMarkdown(res.value), skipped };
+    return { content: htmlToMarkdown(res.value), skipped, extractedImages };
   }
   if (name.endsWith('.doc')) throw new Error('Old .doc files can\'t be read. In Word, use File → Save As → Word Document (.docx).');
   const text = (await file.text()).replace(/\r/g, '');
@@ -1718,7 +1733,7 @@ async function cutFigures(raw, getPage) {
 
 async function readPaperToExam(file) {
   const low = file.name.toLowerCase();
-  let content = null, text = null, files = [], skipped = 0, getPage = null;
+  let content = null, text = null, files = [], skipped = 0, getPage = null, extractedImages = null;
   if (PAPER_FILES.test(low)) {
     if (file.size > SOURCE_FILE_MAX) throw new Error(`"${file.name}" is too big. PDFs and photos can be up to 14 MB.`);
     const pdf = low.endsWith('.pdf'), bytes = await file.arrayBuffer();
@@ -1738,7 +1753,7 @@ async function readPaperToExam(file) {
       text = r.text;
     }
   } else {
-    ({ content, skipped } = await readImportFile(file));
+    ({ content, skipped, extractedImages } = await readImportFile(file));
     text = content;
     if (!content.trim()) throw new Error('No text found in this file.');
   }
@@ -1746,6 +1761,33 @@ async function readPaperToExam(file) {
   const missedFigures = getPage ? await cutFigures(raw, getPage) : 0;
   const exam = normalizeExam(raw);
   if (!exam.questions.length) throw new Error('No questions were found in this paper.');
+
+  if (extractedImages && extractedImages.length) {
+    const markRegex = /\*\[(?:Picture|চিত্র)(?: (\d+))?\]\*/g;
+    const clean = t => String(t || '').replace(/\*\[(?:Picture|চিত্র)(?: \d+)?\]\*/g, '\n').trim();
+    for (const q of exam.questions) {
+      const texts = [q.stimulus, q.text, ...(q.parts || []).map(p => p.text)];
+      const found = texts.flatMap(t => [...String(t || '').matchAll(markRegex)]);
+      if (found.length) {
+        const m = found.find(x => x[1]);
+        if (m && extractedImages[m[1] - 1]) q.figure = extractedImages[m[1] - 1];
+        if (q.stimulus) q.stimulus = clean(q.stimulus);
+        if (q.text) q.text = clean(q.text);
+        if (q.parts) q.parts.forEach(p => { p.text = clean(p.text); });
+      }
+      if (q.type === 'mcq') {
+        const figs = q.options.map(t => {
+          const m = [...String(t || '').matchAll(markRegex)][0];
+          return m && extractedImages[m[1] - 1] ? extractedImages[m[1] - 1] : undefined;
+        });
+        if (figs.some(Boolean)) {
+          q.optionFigures = figs.map(f => f || '');
+          q.options = q.options.map((t, i) => clean(t) || (figs[i] ? '' : t));
+        }
+      }
+    }
+  }
+
   return { exam, content, skipped, missedFigures };
 }
 
