@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
+import { auth, db, onAuthStateChanged } from '../services/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 const STORE_KEY = 'tuitrix_data';
 const STORE_VERSION = 1;
@@ -81,13 +83,77 @@ const StoreContext = createContext<StoreContextType | null>(null);
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(loadState);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const isMigratingRef = useRef(false);
+  const authLoadedRef = useRef(false);
+
+  // Firestore sync and migration
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        authLoadedRef.current = true;
+        try {
+          const docRef = doc(db, `users/${user.uid}/data/appState`);
+          const docSnap = await getDoc(docRef);
+
+          if (docSnap.exists()) {
+            const remoteState = docSnap.data() as AppState;
+            setState(remoteState);
+            localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
+          } else {
+            // Document doesn't exist, check if local state needs migrating
+            const localRaw = localStorage.getItem(STORE_KEY);
+            let needsMigration = false;
+            let dataToUpload = state;
+            if (localRaw) {
+               const localParsed = JSON.parse(localRaw) as AppState;
+               // Heuristic to see if it's not empty
+               if (localParsed.students && localParsed.students.length > 0 || localParsed.settings?.tutorName) {
+                 needsMigration = true;
+                 dataToUpload = localParsed;
+               }
+            }
+            if (needsMigration) {
+               isMigratingRef.current = true;
+               await setDoc(docRef, dataToUpload);
+               isMigratingRef.current = false;
+               setState(dataToUpload);
+            } else {
+               await setDoc(docRef, state);
+            }
+          }
+        } catch (error) {
+          console.error("Error syncing with Firestore:", error);
+        }
+      } else {
+        // user logged out or guest mode
+        if (authLoadedRef.current) {
+          // This means a user was previously logged in during this session and just logged out
+          // Clear their data from local storage so it doesn't leak into guest mode
+          localStorage.removeItem(STORE_KEY);
+          setState(defaultState());
+        } else {
+          // Normal guest mode load
+          setState(loadState());
+        }
+        authLoadedRef.current = false;
+      }
+    });
+
+    return () => unsubscribe();
+  }, []); // state shouldn't be here since we upload dataToUpload
 
   // Persist state changes
   useEffect(() => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      // Write to firestore if logged in and not currently migrating
+      const user = auth.currentUser;
+      if (user && authLoadedRef.current && !isMigratingRef.current) {
+        const docRef = doc(db, `users/${user.uid}/data/appState`);
+        setDoc(docRef, state).catch(e => console.error('Failed to save to Firestore', e));
+      }
     } catch (e) {
-      console.error('Failed to save to localStorage', e);
+      console.error('Failed to save state', e);
     }
   }, [state]);
 
