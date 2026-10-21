@@ -1,13 +1,13 @@
-// Accounts, credits and Pro. Active only when the app is served by the Manator server
+// Accounts, credits and Pro. Active only when the app is served by the Tuitrix server
 // (server/server.js); opened as plain static files it keeps the old "your own AI key" mode.
 const account = { server: false, user: null, config: null };
-const ACCOUNT_KEY = 'manator_account';
+const ACCOUNT_KEY = 'tuitrix_account';
 let staticModeLogged = false;
 
 function logStaticMode(reason) {
   if (staticModeLogged) return;
   staticModeLogged = true;
-  console.info(`Manator is running in static mode (${reason}). Login, AI credits and Pro checkout need the optional Node server.`);
+  console.info(`Tuitrix is running in static mode (${reason}). Login, AI credits and Pro checkout need the optional Node server.`);
 }
 
 async function initAccount() {
@@ -41,7 +41,7 @@ async function api(path, body, method) {
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  } catch (e) { throw new Error('Can\'t reach the Manator server. Check your internet connection.'); }
+  } catch (e) { throw new Error('Can\'t reach the Tuitrix server. Check your internet connection.'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && account.user && path !== 'api/login') { account.user = null; }
@@ -144,7 +144,7 @@ function planCardInner() {
       ${isStaff() && can('unlimited') ? '' : `<button class="btn primary" data-action="go-pro">${isPro() ? 'Extend Pro' : `Go Pro · ${priceText('monthly')}`}</button>`}
       ${isStaff() ? '<a class="btn" href="#/admin">Admin page</a>' : ''}
       <button class="btn ghost" data-action="sign-out">Sign out</button></div>
-    <p class="help" style="margin-top:10px">The AI runs on Manator's server. Only the class, subject, topics and any file or text you attach are sent; student names, phone numbers and money never leave this browser.</p></div>`;
+    <p class="help" style="margin-top:10px">The AI runs on Tuitrix's server. Only the class, subject, topics and any file or text you attach are sent; student names, phone numbers and money never leave this browser.</p></div>`;
 }
 
 function openAuth(mode) {
@@ -308,7 +308,7 @@ function viewAdmin() {
     </tbody></table>` : '<div class="empty">No payments yet.</div>'}</div></div>` : '')
     + (d.admins ? `<div class="section"><h2>Admins (${d.admins.length})</h2><div class="grid">
       <div class="card"><h3>Add an admin</h3><form class="form" id="f-admin-add">
-        <p class="help">They need a Manator account first. Admins only get the rights you tick, and only you can add or remove admins.</p>
+        <p class="help">They need a Tuitrix account first. Admins only get the rights you tick, and only you can add or remove admins.</p>
         <label class="field">Their account email<input name="email" type="email" required autocomplete="off"></label>
         ${permBoxes([])}
         <div class="form-actions"><button class="btn primary">Add admin</button></div></form></div>

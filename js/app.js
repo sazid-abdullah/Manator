@@ -177,7 +177,7 @@ function viewHome() {
     return `<div class="page-head"><div><h1>Welcome${greetName}</h1><div class="sub">Your private tuition manager. Everything stays on this device.</div></div></div>
       <div class="card" style="text-align:center;padding:36px 20px">
         <h2>Start by adding your first student</h2>
-        <p class="muted" style="margin:8px auto 18px;max-width:460px">Add their weekly schedule and fee contract (e.g. ${money(3000)} every 12 classes, or monthly). Then log what you teach each day and Manator keeps track of the money.</p>
+        <p class="muted" style="margin:8px auto 18px;max-width:460px">Add their weekly schedule and fee contract (e.g. ${money(3000)} every 12 classes, or monthly). Then log what you teach each day and Tuitrix keeps track of the money.</p>
         <div class="actions" style="justify-content:center"><button class="btn primary" data-action="add-student">+ Add student</button><button class="btn" data-action="load-demo">Try with demo data</button></div>
       </div>`;
   }
@@ -907,7 +907,7 @@ function exportCSV() {
     return `"${t.replace(/"/g, '""')}"`;
   };
   const csv = rows.map(r => r.map(cell).join(',')).join('\r\n');
-  downloadFile(`manator-money-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
+  downloadFile(`tuitrix-money-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
 }
 
 // ── AI ───────────────────────────────────────────────────────
@@ -1017,7 +1017,7 @@ function viewAI() {
   const p = AI_PROVIDERS[db.ai.provider];
   const ready = aiReady();
   const tool = ui.aiTool in AI_TOOLS ? ui.aiTool : 'plan';
-  const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${account.server ? 'Manator AI' : `${esc(p.name)} · ${esc(aiModel())}`}</div></div></div>
+  const head = `<div class="page-head"><div><h1>AI assistant</h1><div class="sub">Lesson plans, exam papers and worksheets · ${account.server ? 'Tuitrix AI' : `${esc(p.name)} · ${esc(aiModel())}`}</div></div></div>
     ${ready || account.server ? '' : `<div class="notice warn">Connect a free AI provider first: <a href="#/settings">Settings → AI</a>. Google Gemini's free key takes a minute to create.</div>`}
     ${planBarHTML()}
     <div class="seg" id="ai-tools" style="margin-bottom:16px">${Object.entries(AI_TOOLS).map(([k, v]) => `<button data-tool="${k}" class="${tool === k ? 'active' : ''}">${v}</button>`).join('')}</div>`;
@@ -1587,7 +1587,7 @@ function openExamSetup(doc, opts) {
   const hash = hashStr(doc.content);
   const ex = db.exams.find(e => e.docId === doc.id && e.hash === hash);
   if (!ex) {
-    openModal('Start exam', `<p>First, Manator turns this paper into an on-screen exam with tap-to-answer MCQs, answer boxes and the answer key. This uses the AI once; after that the exam works offline.</p>
+    openModal('Start exam', `<p>First, Tuitrix turns this paper into an on-screen exam with tap-to-answer MCQs, answer boxes and the answer key. This uses the AI once; after that the exam works offline.</p>
       <p class="help" style="margin-top:8px">Only the paper's text is sent to the AI.</p><div class="notice err" id="ex-err" hidden></div>
       <div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ex-prep">Prepare exam</button></div>`, body => {
       body.querySelector('#ex-prep').onclick = async e => {
@@ -1628,7 +1628,7 @@ function openExamSetup(doc, opts) {
     ${st.guessed ? `<div class="notice warn">The paper had no answer for ${st.guessed} MCQ${st.guessed === 1 ? '' : 's'}, so the AI worked ${st.guessed === 1 ? 'it' : 'them'} out. Check ${st.guessed === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
     ${st.figures ? `<div class="notice">${st.figures} picture${st.figures === 1 ? ' was' : 's were'} cut out of the paper and will show in the exam. Check ${st.figures === 1 ? 'it' : 'them'} in Preview with answers.</div>` : ''}
     ${lostPics ? `<div class="notice warn">The AI found ${lostPics} more picture${lostPics === 1 ? '' : 's'} it couldn't cut out. Check the questions that need ${lostPics === 1 ? 'it' : 'them'} in Preview with answers, or upload again.</div>` : ''}
-    ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Manator can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
+    ${doc.meta?.skippedImages ? `<div class="notice warn">This Word file had ${doc.meta.skippedImages} picture${doc.meta.skippedImages === 1 ? '' : 's'} that Tuitrix can't read, so any diagrams or graphs are missing. Check questions that need them in Preview with answers.</div>` : ''}
     <label class="field">Student<select name="studentId">${studentOptions(opts.studentId || doc.studentId || '', true, '— No student —')}</select></label>
     <label class="field">Time (minutes)<input name="duration" type="number" min="1" max="600" value="${ex.duration}" required></label>
     <div class="help">Hand the device to the student. The timer starts when you press Start exam, and the exam submits itself when time runs out.</div>
@@ -2316,7 +2316,7 @@ function viewSettings() {
           <button class="btn danger" data-action="erase-all">Erase all data</button></div>
         ${account.server ? '' : '<label class="check" style="margin-top:12px"><input type="checkbox" id="backup-keys"> Include AI keys in the backup file</label>'}</div>
 
-      <div class="card" id="install-card"${installPrompt ? '' : ' hidden'}><h2>Install app</h2><p class="muted small" style="margin-bottom:12px">Add Manator to your home screen; it works offline.</p><button class="btn primary" data-action="install">Install</button></div>
+      <div class="card" id="install-card"${installPrompt ? '' : ' hidden'}><h2>Install app</h2><p class="muted small" style="margin-bottom:12px">Add Tuitrix to your home screen; it works offline.</p><button class="btn primary" data-action="install">Install</button></div>
       <p class="muted small">${db.students.length} students · ${db.lessons.length} classes · ${db.payments.length} payments · ${db.docs.length} AI documents</p>
     </div>`;
 }
@@ -2505,7 +2505,7 @@ const ACTIONS = {
   'money-ai-copy': () => ui.moneyAI && ui.moneyAI.content && copyText(ui.moneyAI.content),
   'backup': () => {
     const keys = document.getElementById('backup-keys');
-    downloadFile(`manator-backup-${todayISO()}.json`, exportBackup(keys && keys.checked), 'application/json');
+    downloadFile(`tuitrix-backup-${todayISO()}.json`, exportBackup(keys && keys.checked), 'application/json');
     db.settings.lastBackup = new Date().toISOString(); if (!save()) return; render();
     toast('Backup downloaded');
   },

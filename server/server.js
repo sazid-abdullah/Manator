@@ -1,8 +1,20 @@
-// Manator server: serves the app and adds accounts, AI with the server's keys, ad credits,
+// Tuitrix server: serves the app and adds accounts, AI with the server's keys, ad credits,
 // Pro payments and an admin settings page. No dependencies: Node 22.13+ only.
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin (optional fallback for development)
+if (!admin.apps.length) {
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault()
+    });
+  } catch (err) {
+    console.warn('Firebase Admin SDK not fully initialized (missing credentials). Auth verify middleware may fail.', err.message);
+  }
+}
 const crypto = require('node:crypto');
 const { db, OWNER_EMAIL, PERMS, savedSettings, getSettings, saveSettings, maskedSettings, SECRET_PATHS, getAt, setAt, hashPassword, checkPassword, sha256, newId } = require('./db');
 const ai = require('./ai');
@@ -264,7 +276,7 @@ const routes = {
 
   'GET /pay/test': (req, res, url) => {
     const p = db.prepare("SELECT * FROM payments WHERE id = ? AND gateway = 'test' AND status = 'pending'").get(url.searchParams.get('id') || '');
-    if (!p || getSettings().gateway !== 'test') return send(res, 404, '<p>This test payment is not open any more. <a href="/#/settings">Back to Manator</a></p>');
+    if (!p || getSettings().gateway !== 'test') return send(res, 404, '<p>This test payment is not open any more. <a href="/#/settings">Back to Tuitrix</a></p>');
     send(res, 200, pay.testGatewayPage(p, esc));
   },
   'POST /pay/test/finish': async (req, res) => {
@@ -392,6 +404,19 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
+
+  // Lightweight Firebase Auth middleware
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const idToken = authHeader.split('Bearer ')[1];
+    try {
+      req.firebaseUser = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      // Token exists but is invalid/expired
+      req.firebaseUser = null;
+    }
+  }
+
   const url = new URL(req.url, 'http://x');
   const route = routes[`${req.method} ${url.pathname}`];
   try {
@@ -412,6 +437,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Manator server on http://localhost:${PORT}`);
+  console.log(`Tuitrix server on http://localhost:${PORT}`);
   if (ownerSetupCode) console.log(`Owner setup code for ${OWNER_EMAIL}: ${ownerSetupCode}`);
 });

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { AppState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
 
-const STORE_KEY = 'manator_data';
+const STORE_KEY = 'tuitrix_data';
 const STORE_VERSION = 1;
 
 function defaultState(): AppState {
@@ -406,9 +406,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const importBackup = useCallback((text: string) => {
     let data;
-    try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not a Manator backup.'); }
+    try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not a Tuitrix backup.'); }
     if (!data || typeof data !== 'object' || !Array.isArray(data.students) || !Array.isArray(data.lessons) || !Array.isArray(data.contracts) || !Array.isArray(data.payments)) {
-      throw new Error('This file is not a Manator backup.');
+      throw new Error('This file is not a Tuitrix backup.');
     }
     const currentKeys = state.ai.keys;
     setState({

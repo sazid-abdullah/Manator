@@ -42,7 +42,7 @@ async function startCheckout(pay, user, settings, publicUrl) {
     success_url: `${publicUrl}/pay/sslcommerz/return`, fail_url: `${publicUrl}/pay/sslcommerz/return`,
     cancel_url: `${publicUrl}/pay/sslcommerz/return`, ipn_url: `${publicUrl}/pay/sslcommerz/ipn`,
     cus_name: user.name || user.email, cus_email: user.email, cus_add1: 'N/A', cus_city: 'Dhaka', cus_country: 'Bangladesh', cus_phone: 'N/A',
-    shipping_method: 'NO', product_name: `Manator Pro (${pay.plan})`, product_category: 'Software', product_profile: 'non-physical-goods',
+    shipping_method: 'NO', product_name: `Tuitrix Pro (${pay.plan})`, product_category: 'Software', product_profile: 'non-physical-goods',
   });
   const res = await fetch(`${SSL_HOST(c.sandbox)}/gwprocess/v4/api.php`, { method: 'POST', body });
   const data = await res.json().catch(() => ({}));
@@ -71,7 +71,7 @@ async function verifySSLCommerz(form, settings) {
 
 function testGatewayPage(pay, esc) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Test payment · Manator</title><style>
+<title>Test payment · Tuitrix</title><style>
 body{font:15px/1.5 system-ui,sans-serif;background:#eef1f6;color:#1b1f2a;margin:0;padding:24px;display:grid;place-items:center;min-height:100vh;box-sizing:border-box}
 .box{background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.08)}
 .tag{display:inline-block;background:#f5c451;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700}
@@ -79,7 +79,7 @@ h1{font-size:20px;margin:12px 0 4px}.amt{font-size:28px;font-weight:800;margin:8
 label{display:flex;gap:10px;align-items:center;border:1px solid #d6dbe6;border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer}
 .row{display:flex;gap:8px;margin-top:16px}button{flex:1;padding:12px;border-radius:10px;border:0;font-weight:700;font-size:15px;cursor:pointer}
 .pay{background:#e2136e;color:#fff}.cancel{background:#e9ecf3}</style></head><body><form class="box" method="post" action="/pay/test/finish">
-<span class="tag">TEST GATEWAY · no real money</span><h1>Manator Pro · ${esc(pay.plan)}</h1><div class="amt">৳${esc(pay.amount.toLocaleString('en-US'))}</div>
+<span class="tag">TEST GATEWAY · no real money</span><h1>Tuitrix Pro · ${esc(pay.plan)}</h1><div class="amt">৳${esc(pay.amount.toLocaleString('en-US'))}</div>
 <input type="hidden" name="id" value="${esc(pay.id)}">
 <label><input type="radio" name="method" value="bKash" checked> bKash</label>
 <label><input type="radio" name="method" value="Nagad"> Nagad</label>

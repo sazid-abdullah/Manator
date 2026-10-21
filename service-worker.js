@@ -1,5 +1,5 @@
-// Network-first service worker for Manator PWA
-const CACHE_NAME = 'manator-v20';
+// Network-first service worker for Tuitrix PWA
+const CACHE_NAME = 'tuitrix-v20';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

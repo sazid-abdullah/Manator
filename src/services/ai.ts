@@ -33,7 +33,7 @@ export const AI_PROVIDERS = {
   },
 };
 
-const MODEL_CACHE_KEY = 'manator_models';
+const MODEL_CACHE_KEY = 'tuitrix_models';
 
 function readModelCache(): Record<string, any> {
   try {
@@ -153,7 +153,7 @@ export async function callAI(
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (key) headers.Authorization = `Bearer ${key}`;
-  if (provider === 'openrouter') headers['X-Title'] = 'Manator';
+  if (provider === 'openrouter') headers['X-Title'] = 'Tuitrix';
 
   const res = await fetch(urls[provider], {
     method: 'POST',

@@ -103,7 +103,7 @@ export const SettingsView: React.FC = () => {
 
   const handleBackupDownload = () => {
     const content = exportBackup(includeKeysInBackup);
-    downloadFile(`manator-backup-${todayISO()}.json`, content, 'application/json');
+    downloadFile(`tuitrix-backup-${todayISO()}.json`, content, 'application/json');
     updateSettings({ lastBackup: new Date().toISOString() });
     toast('Backup file downloaded', 'success');
   };
@@ -295,14 +295,14 @@ export const SettingsView: React.FC = () => {
         <div className="card">
           <h2>Publishing & Monetization Architecture</h2>
           <p className="muted small" style={{ marginBottom: '12px' }}>
-            Everything you need to launch Manator as both an installable app and public web application:
+            Everything you need to launch Tuitrix as both an installable app and public web application:
           </p>
 
           <div style={{ display: 'grid', gap: '14px', fontSize: '0.9rem' }}>
             <div style={{ padding: '12px', background: 'var(--card2)', borderRadius: '10px' }}>
               <b style={{ color: 'var(--accent)' }}>1. Web & Mobile App Deployment (PWA)</b>
               <p className="muted small" style={{ marginTop: '4px' }}>
-                Manator is built as a Progressive Web App (PWA). When hosted on Vercel, Firebase Hosting, Netlify, or Cloud Run, visitors on <b>Android, iPhone, iPad, Windows, or Mac</b> will see an "Install app" prompt or can tap "Add to Home Screen". It installs directly as a standalone native-feeling app without needing app store approval!
+                Tuitrix is built as a Progressive Web App (PWA). When hosted on Vercel, Firebase Hosting, Netlify, or Cloud Run, visitors on <b>Android, iPhone, iPad, Windows, or Mac</b> will see an "Install app" prompt or can tap "Add to Home Screen". It installs directly as a standalone native-feeling app without needing app store approval!
               </p>
             </div>
 

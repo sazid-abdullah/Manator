@@ -110,7 +110,7 @@ async function callModel(provider, key, model, system, user, opts) {
     return text;
   }
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
-  if (provider === 'openrouter') headers['X-Title'] = 'Manator';
+  if (provider === 'openrouter') headers['X-Title'] = 'Tuitrix';
   const body = { model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature, max_tokens: maxTokens, stream: false };
   if (opts.json) body.response_format = { type: 'json_object' };
   const res = await fetch(`${BASE[provider]}/v1/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) });

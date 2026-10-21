@@ -1,5 +1,5 @@
 // Local-first storage and shared helpers. Everything lives in one localStorage key.
-const STORE_KEY = 'manator_data';
+const STORE_KEY = 'tuitrix_data';
 const STORE_VERSION = 1;
 
 function defaultState() {
@@ -278,9 +278,9 @@ function exportBackup(includeKeys) {
 
 function importBackup(text) {
   let data;
-  try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not a Manator backup.'); }
+  try { data = JSON.parse(text); } catch (e) { throw new Error('This file is not a Tuitrix backup.'); }
   if (!isObj(data) || !Array.isArray(data.students) || !Array.isArray(data.lessons) || !Array.isArray(data.contracts) || !Array.isArray(data.payments)) {
-    throw new Error('This file is not a Manator backup.');
+    throw new Error('This file is not a Tuitrix backup.');
   }
   const keys = db.ai.keys;
   db = normalizeState(data);
