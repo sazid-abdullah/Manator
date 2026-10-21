@@ -1,6 +1,6 @@
 {
-  "name": "Manator · Tuition Manager",
-  "short_name": "Manator",
+  "name": "Tuitrix · Tuition Manager",
+  "short_name": "Tuitrix",
   "description": "Track tuition students, lessons, fee contracts and money, with free AI lesson plans and exams.",
   "start_url": "./index.html",
   "scope": "./",

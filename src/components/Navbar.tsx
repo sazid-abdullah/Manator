@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
+import { auth, signOut, onAuthStateChanged } from '../services/firebase';
+import { User } from 'firebase/auth';
 
 interface NavbarProps {
   currentRoute: string;
   onNavigate: (route: string) => void;
+  onLoginClick: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
+export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLoginClick }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
@@ -29,6 +33,13 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleInstallClick = async () => {
@@ -125,7 +136,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
             <path d="M11 13H17" stroke="white" strokeWidth="2" strokeLinecap="round" />
             <path d="M14 10V18" stroke="white" strokeWidth="2" strokeLinecap="round" />
           </svg>
-          <span>Manator</span>
+          <span>Tuitrix</span>
         </a>
 
         {deferredPrompt && !isInstalled && (
@@ -133,10 +144,19 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate }) => {
             onClick={handleInstallClick}
             className="btn xs primary"
             style={{ padding: '3px 8px', fontSize: '0.75rem', borderRadius: '6px' }}
-            title="Install Manator app on this device"
+            title="Install Tuitrix app on this device"
           >
             📲 Install App
           </button>
+        )}
+
+        {user ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+            <span style={{ color: 'var(--muted)' }} className="hide-mobile">{user.email}</span>
+            <button onClick={() => signOut(auth)} className="btn xs">Logout</button>
+          </div>
+        ) : (
+          <button onClick={onLoginClick} className="btn xs primary">Login</button>
         )}
       </div>
 

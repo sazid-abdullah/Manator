@@ -66,7 +66,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <h2>Start by adding your first student</h2>
           <p className="muted" style={{ margin: '8px auto 18px', maxWidth: '460px' }}>
             Add their weekly schedule and fee contract (e.g. {money(3000)} every 12 classes, or monthly).
-            Then log what you teach each day and Manator keeps track of the money.
+            Then log what you teach each day and Tuitrix keeps track of the money.
           </p>
           <div className="actions" style={{ justifyContent: 'center' }}>
             <button className="btn primary" onClick={onOpenStudentModal}>

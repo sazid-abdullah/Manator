@@ -11,6 +11,7 @@ import { GoalModal } from './components/GoalModal';
 import { GoalDepositModal } from './components/GoalDepositModal';
 import { UploadPaperModal } from './components/UploadPaperModal';
 import { ImportDocModal } from './components/ImportDocModal';
+import { AuthModal } from './components/AuthModal';
 
 import { HomeView } from './views/HomeView';
 import { StudentsView } from './views/StudentsView';
@@ -92,6 +93,8 @@ export const App: React.FC = () => {
 
   const [importDocModalOpen, setImportDocModalOpen] = useState(false);
 
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
   // Check for running exams
   const runningExam = state.attempts.find(
     a => a.status === 'running' && a.endsAt > Date.now()
@@ -99,7 +102,7 @@ export const App: React.FC = () => {
 
   return (
     <>
-      <Navbar currentRoute={route} onNavigate={navigate} />
+      <Navbar currentRoute={route} onNavigate={navigate} onLoginClick={() => setAuthModalOpen(true)} />
 
       <main id="view" tabIndex={-1}>
         {runningExam && route !== 'exam' && (
@@ -340,6 +343,11 @@ export const App: React.FC = () => {
       <ImportDocModal
         isOpen={importDocModalOpen}
         onClose={() => setImportDocModalOpen(false)}
+      />
+
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
       />
 
       <ToastContainer />

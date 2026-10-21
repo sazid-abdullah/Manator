@@ -1,5 +1,5 @@
 {
-  "name": "Manator · Tuition Manager",
+  "name": "Tuitrix · Tuition Manager",
   "description": "Track tuition students, lessons, fee contracts and money. Free AI lesson plans and exams.",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

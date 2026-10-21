@@ -129,7 +129,7 @@ export const MoneyView: React.FC<MoneyViewProps> = ({
       return `"${t.replace(/"/g, '""')}"`;
     };
     const csv = rows.map(r => r.map(cell).join(',')).join('\r\n');
-    downloadFile(`manator-money-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
+    downloadFile(`tuitrix-money-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
     toast('Money CSV exported', 'success');
   };
 

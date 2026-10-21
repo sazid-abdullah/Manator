@@ -41,7 +41,7 @@ for (const [p, m] of Object.entries(db.ai.models)) if (OLD_DEFAULT_MODELS.includ
 // Free models are renamed and retired often, so the list comes from the provider (with the
 // user's key) and is cached per browser. "Auto" (empty choice) uses the best-ranked model and
 // moves to the next one when a model is retired (404) or out of free quota (429).
-const MODEL_CACHE_KEY = 'manator_models';
+const MODEL_CACHE_KEY = 'tuitrix_models';
 const MODEL_CACHE_MS = 24 * 3600e3;
 let aiLastModel = '';
 
@@ -232,7 +232,7 @@ async function callModel(provider, model, system, user, opts) {
   };
   const headers = { 'Content-Type': 'application/json' };
   if (key) headers.Authorization = `Bearer ${key}`;
-  if (provider === 'openrouter') headers['X-Title'] = 'Manator';
+  if (provider === 'openrouter') headers['X-Title'] = 'Tuitrix';
   const body = { model, messages, temperature, max_tokens: maxTokens, stream: false };
   if (opts.json) {
     if (provider === 'ollama') body.format = 'json';
