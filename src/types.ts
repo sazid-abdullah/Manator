@@ -179,6 +179,14 @@ export interface AIState {
   keys: Record<string, string>;
 }
 
+export interface BillingState {
+  plan: 'free' | 'pro';
+  proUntil: number;
+  credits: number;
+  updatedAt: number;
+  transactions: any[];
+}
+
 export interface AppState {
   version: number;
   settings: AppSettings;

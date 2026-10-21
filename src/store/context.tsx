@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AppState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
+import { AppState, BillingState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
 import { auth, db, onAuthStateChanged } from '../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const STORE_KEY = 'tuitrix_data';
 const STORE_VERSION = 1;
@@ -43,6 +43,7 @@ function loadState(): AppState {
 
 interface StoreContextType {
   state: AppState;
+  billingState: BillingState | null;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   toasts: ToastMessage[];
   toast: (msg: string, type?: 'info' | 'error' | 'success', action?: { label: string; fn: () => void }) => void;
@@ -82,14 +83,25 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(loadState);
+  const [billingState, setBillingState] = useState<BillingState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const isMigratingRef = useRef(false);
   const authLoadedRef = useRef(false);
 
   // Firestore sync and migration
   useEffect(() => {
+    let unsubscribeBilling: () => void;
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (doc) => {
+          if (doc.exists()) {
+            setBillingState(doc.data() as BillingState);
+          } else {
+            setBillingState(null);
+          }
+        });
+
         authLoadedRef.current = true;
         try {
           const docRef = doc(db, `users/${user.uid}/data/appState`);
@@ -135,11 +147,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Normal guest mode load
           setState(loadState());
         }
+        setBillingState(null);
+        if (unsubscribeBilling) unsubscribeBilling();
         authLoadedRef.current = false;
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (unsubscribeBilling) unsubscribeBilling();
+    };
   }, []); // state shouldn't be here since we upload dataToUpload
 
   // Persist state changes
@@ -504,6 +521,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <StoreContext.Provider value={{
       state,
+      billingState,
       setState,
       toasts,
       toast,
