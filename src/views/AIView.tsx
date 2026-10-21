@@ -1,0 +1,941 @@
+import React, { useState, useEffect } from 'react';
+import { useStore } from '../store/context';
+import {
+  callAI,
+  AI_SYSTEM,
+  CHECK_SYSTEM,
+  lessonPlanPrompt,
+  examPrompt,
+  worksheetPrompt,
+  checkPrompt,
+  parseCheck,
+  revisePrompt,
+  renderMarkdown,
+  splitAnswerKey,
+  cleanDoc,
+  examMarks,
+  AI_PROVIDERS,
+  autoModel,
+} from '../services/ai';
+import { fmtDate, uid } from '../utils/date';
+import { SavedDoc } from '../types';
+
+interface AIViewProps {
+  initialTool?: string;
+  initialStudentId?: string;
+  onNavigate: (route: string, param?: string) => void;
+  onStartExam: (doc: SavedDoc) => void;
+  onUploadPaper: () => void;
+  onImportDoc: () => void;
+}
+
+const AI_TOOLS = {
+  plan: 'Lesson plan',
+  exam: 'Exam paper',
+  worksheet: 'Worksheet',
+  saved: 'Saved library',
+  results: 'Exam results',
+};
+
+const EXAM_TYPES = [
+  'Multiple choice (MCQ)',
+  'Short answer',
+  'Broad / creative questions',
+  'Fill in the blanks',
+  'True / False',
+  'Matching',
+  'Problem solving / numericals',
+];
+
+const LANGS = ['English', 'Bangla', 'English + Bangla'];
+
+export const AIView: React.FC<AIViewProps> = ({
+  initialTool = 'plan',
+  initialStudentId = '',
+  onNavigate,
+  onStartExam,
+  onUploadPaper,
+  onImportDoc,
+}) => {
+  const { state, saveDoc, deleteDoc, studentName, toast } = useStore();
+  const [currentTool, setCurrentTool] = useState<string>(initialTool);
+  const [studentId, setStudentId] = useState(initialStudentId);
+
+  // Form states
+  const [grade, setGrade] = useState('');
+  const [curriculum, setCurriculum] = useState('');
+  const [subject, setSubject] = useState('');
+  const [topic, setTopic] = useState('');
+  const [topics, setTopics] = useState('');
+  const [duration, setDuration] = useState<number>(60);
+  const [level, setLevel] = useState('average');
+  const [difficulty, setDifficulty] = useState('mixed (easy → hard)');
+  const [language, setLanguage] = useState('English');
+  const [examFormat, setExamFormat] = useState('custom');
+  const [cqCount, setCqCount] = useState(8);
+  const [cqAnswer, setCqAnswer] = useState(5);
+  const [mcqCount, setMcqCount] = useState(25);
+  const [marks, setMarks] = useState(50);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([
+    'Multiple choice (MCQ)',
+    'Short answer',
+  ]);
+  const [includeAnswerKey, setIncludeAnswerKey] = useState(true);
+  const [checkWithAI, setCheckWithAI] = useState(true);
+  const [worksheetCount, setWorksheetCount] = useState(15);
+  const [notes, setNotes] = useState('');
+
+  // Result & execution states
+  const [busy, setBusy] = useState<string | false>(false);
+  const [result, setResult] = useState<{
+    tool: string;
+    title: string;
+    content: string;
+    prev?: string;
+    studentId?: string | null;
+    savedId?: string | null;
+    check?: any;
+    error?: string;
+  } | null>(null);
+  const [revisionInput, setRevisionInput] = useState('');
+
+  // Saved docs & results filters
+  const [docsFilterType, setDocsFilterType] = useState('');
+  const [docsFilterStudent, setDocsFilterStudent] = useState('');
+  const [viewingDoc, setViewingDoc] = useState<SavedDoc | null>(null);
+
+  // Prefill student details if student changes
+  useEffect(() => {
+    if (studentId) {
+      const s = state.students.find(x => x.id === studentId);
+      if (s) {
+        setGrade(s.grade || '');
+        setCurriculum(s.curriculum || '');
+        if (s.subjects && s.subjects[0]) setSubject(s.subjects[0]);
+      }
+    }
+  }, [studentId, state.students]);
+
+  const handleFillTopicsFromLog = () => {
+    if (!studentId) {
+      toast('Select a student first', 'error');
+      return;
+    }
+    const logged = state.lessons
+      .filter(l => l.studentId === studentId && l.status === 'taught' && l.topics)
+      .filter(l => !subject || !l.subject || l.subject.toLowerCase() === subject.toLowerCase())
+      .map(l => l.topics!.trim());
+    const unique = [...new Set(logged)];
+    if (!unique.length) {
+      toast('No topics found in class log for this student and subject', 'info');
+      return;
+    }
+    setTopics(unique.join('\n'));
+    toast(`Added ${unique.length} topic(s) from class log`, 'success');
+  };
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+
+    const key = state.ai.keys[state.ai.provider];
+    if (state.ai.provider !== 'ollama' && (!key || !key.trim())) {
+      toast('Please set up your AI API key in Settings first', 'error');
+      onNavigate('settings');
+      return;
+    }
+
+    setBusy('Generating document with AI…');
+    setResult(null);
+
+    try {
+      const formParams = {
+        grade,
+        curriculum,
+        subject,
+        topic,
+        topics,
+        duration,
+        level,
+        difficulty,
+        language,
+        format: examFormat,
+        cqCount,
+        cqAnswer,
+        mcqCount,
+        marks,
+        types: selectedTypes,
+        answerKey: includeAnswerKey,
+        count: worksheetCount,
+        notes,
+        studentId,
+      };
+
+      const title =
+        currentTool === 'plan'
+          ? `Lesson plan: ${subject} – ${topic}`
+          : currentTool === 'exam'
+          ? `Exam: ${subject}${grade ? ' (' + grade + ')' : ''} – ${examMarks(formParams)} marks`
+          : `Worksheet: ${subject} – ${topic}`;
+
+      const promptText =
+        currentTool === 'plan'
+          ? lessonPlanPrompt(formParams)
+          : currentTool === 'exam'
+          ? examPrompt(formParams)
+          : worksheetPrompt(formParams);
+
+      const generated = cleanDoc(await callAI(AI_SYSTEM, promptText, state));
+
+      const newResult = {
+        tool: currentTool,
+        title,
+        content: generated,
+        studentId: studentId || null,
+        savedId: null,
+      };
+
+      setResult(newResult);
+      setBusy(false);
+
+      if (checkWithAI && currentTool !== 'plan') {
+        runCheck(newResult, formParams);
+      }
+    } catch (err: any) {
+      setBusy(false);
+      setResult({
+        tool: currentTool,
+        title: 'Error',
+        content: '',
+        error: err.message || 'Generation failed',
+      });
+      toast(err.message || 'Generation failed', 'error');
+    }
+  };
+
+  const runCheck = async (r: any, formParams: any) => {
+    setBusy('Examining and verifying answers…');
+    try {
+      const checkText = await callAI(
+        CHECK_SYSTEM,
+        checkPrompt(r.tool, formParams, r.content),
+        state,
+        { temperature: 0.2 }
+      );
+      const parsed = parseCheck(checkText);
+      setResult(prev => (prev ? { ...prev, check: parsed } : null));
+    } catch (err: any) {
+      setResult(prev => (prev ? { ...prev, check: { error: err.message } } : null));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRevise = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!result || !revisionInput.trim() || busy) return;
+
+    setBusy('Applying requested changes…');
+    try {
+      const revised = cleanDoc(
+        await callAI(
+          AI_SYSTEM,
+          revisePrompt(result.tool, {}, result.content, revisionInput),
+          state
+        )
+      );
+      setResult(prev =>
+        prev
+          ? {
+              ...prev,
+              prev: prev.content,
+              content: revised,
+              savedId: null,
+              check: null,
+            }
+          : null
+      );
+      setRevisionInput('');
+      toast('Document revised', 'success');
+    } catch (err: any) {
+      toast(err.message || 'Revision failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveResult = () => {
+    if (!result || result.savedId) return;
+    const docId = uid();
+    saveDoc({
+      id: docId,
+      type: result.tool as any,
+      title: result.title,
+      content: result.content,
+      studentId: result.studentId || null,
+      createdAt: new Date().toISOString(),
+    });
+    setResult(prev => (prev ? { ...prev, savedId: docId } : null));
+    toast('Saved to your offline AI library', 'success');
+  };
+
+  const handlePrint = (title: string, md: string) => {
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>
+      body{font:12pt/1.5 'Segoe UI','Noto Sans Bengali',Arial,sans-serif;color:#111;margin:18mm}
+      h2{font-size:16pt;margin:14pt 0 6pt}h3{font-size:13pt;margin:12pt 0 4pt}h4,h5{font-size:12pt;margin:10pt 0 4pt}
+      table{border-collapse:collapse;width:100%;margin:6pt 0}th,td{border:1px solid #999;padding:4pt 6pt;text-align:left;vertical-align:top}
+      hr{border:none;border-top:1px dashed #999;margin:14pt 0}ul,ol{margin:4pt 0 4pt 20pt}p{margin:4pt 0}
+      pre,code{font-family:Consolas,monospace}blockquote{border-left:3px solid #999;padding-left:8pt;color:#444}
+    </style></head><body>${renderMarkdown(md)}</body></html>`);
+    doc.close();
+    setTimeout(() => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+      setTimeout(() => frame.remove(), 1000);
+    }, 250);
+  };
+
+  const savedDocsList = state.docs
+    .filter(d => !docsFilterType || d.type === docsFilterType)
+    .filter(d => !docsFilterStudent || d.studentId === docsFilterStudent)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const attemptsList = state.attempts
+    .filter(a => !docsFilterStudent || a.studentId === docsFilterStudent)
+    .sort((a, b) => b.startedAt - a.startedAt);
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>AI Assistant</h1>
+          <div className="sub">
+            Lesson plans, exam papers, worksheets · {AI_PROVIDERS[state.ai.provider]?.name} (
+            {autoModel(state.ai.provider, state)})
+          </div>
+        </div>
+      </div>
+
+      <div className="seg" style={{ marginBottom: '16px' }}>
+        {Object.entries(AI_TOOLS).map(([k, v]) => (
+          <button
+            key={k}
+            className={currentTool === k ? 'active' : ''}
+            onClick={() => setCurrentTool(k)}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+
+      {currentTool === 'results' ? (
+        <div>
+          <div className="toolbar">
+            <select
+              value={docsFilterStudent}
+              onChange={e => setDocsFilterStudent(e.target.value)}
+              aria-label="Filter by Student"
+            >
+              <option value="">All students</option>
+              {state.students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn primary" onClick={onUploadPaper}>
+              Upload question paper
+            </button>
+          </div>
+          <div className="card">
+            <div className="list">
+              {attemptsList.length === 0 ? (
+                <div className="empty">
+                  No exams taken yet. Start an exam from a saved paper or upload a new one.
+                </div>
+              ) : (
+                attemptsList.map(at => (
+                  <a
+                    key={at.id}
+                    className="row"
+                    href={`#/${at.status === 'running' ? 'exam' : 'result'}/${at.id}`}
+                    onClick={e => {
+                      e.preventDefault();
+                      onNavigate(at.status === 'running' ? 'exam' : 'result', at.id);
+                    }}
+                  >
+                    <div className="grow">
+                      <div className="title">{at.title || 'Exam'}</div>
+                      <div className="meta">
+                        {fmtDate(at.startedAt ? new Date(at.startedAt).toISOString().slice(0, 10) : '')}
+                        {at.studentId ? ` · ${studentName(at.studentId)}` : ''}
+                      </div>
+                    </div>
+                    {at.status === 'running' ? (
+                      <span className="badge yellow">Running</span>
+                    ) : (
+                      <span className="badge green">View score</span>
+                    )}
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : currentTool === 'saved' ? (
+        <div>
+          <div className="toolbar">
+            <select
+              value={docsFilterType}
+              onChange={e => setDocsFilterType(e.target.value)}
+              aria-label="Filter by Type"
+            >
+              <option value="">All types</option>
+              <option value="plan">Lesson plan</option>
+              <option value="exam">Exam paper</option>
+              <option value="worksheet">Worksheet</option>
+            </select>
+            <select
+              value={docsFilterStudent}
+              onChange={e => setDocsFilterStudent(e.target.value)}
+              aria-label="Filter by Student"
+            >
+              <option value="">All students</option>
+              {state.students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn primary" onClick={onUploadPaper}>
+              Upload question paper
+            </button>
+            <button className="btn" onClick={onImportDoc}>
+              Import Word / text file
+            </button>
+          </div>
+          <div className="card">
+            <div className="list">
+              {savedDocsList.length === 0 ? (
+                <div className="empty">
+                  Nothing saved yet. Generate a paper or lesson plan above and save it!
+                </div>
+              ) : (
+                savedDocsList.map(d => (
+                  <div key={d.id} className="row">
+                    <div className="grow">
+                      <div className="title">
+                        <a
+                          href="#"
+                          onClick={e => {
+                            e.preventDefault();
+                            setViewingDoc(d);
+                          }}
+                        >
+                          {d.title}
+                        </a>
+                      </div>
+                      <div className="meta">
+                        {AI_TOOLS[d.type as keyof typeof AI_TOOLS] || d.type} ·{' '}
+                        {fmtDate(d.createdAt.slice(0, 10))}
+                        {d.studentId ? ` · ${studentName(d.studentId)}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Generator forms */
+        <div>
+          <div className="card">
+            <form className="form" onSubmit={handleGenerate}>
+              <label className="field">
+                Student (optional)
+                <select
+                  value={studentId}
+                  onChange={e => setStudentId(e.target.value)}
+                >
+                  <option value="">— Any / no student —</option>
+                  {state.students.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="form-row">
+                <label className="field">
+                  Class / Grade
+                  <input
+                    value={grade}
+                    onChange={e => setGrade(e.target.value)}
+                    placeholder="e.g. Class 9, HSC 1st year"
+                  />
+                </label>
+                <label className="field">
+                  Curriculum / Board
+                  <input
+                    value={curriculum}
+                    onChange={e => setCurriculum(e.target.value)}
+                    placeholder="e.g. NCTB, Cambridge"
+                  />
+                </label>
+                <label className="field">
+                  Subject *
+                  <input
+                    required
+                    value={subject}
+                    onChange={e => setSubject(e.target.value)}
+                    placeholder="e.g. Physics"
+                  />
+                </label>
+              </div>
+
+              {currentTool === 'plan' && (
+                <>
+                  <label className="field">
+                    Topic *
+                    <input
+                      required
+                      value={topic}
+                      onChange={e => setTopic(e.target.value)}
+                      placeholder="e.g. Newton's laws of motion"
+                    />
+                  </label>
+                  <div className="form-row">
+                    <label className="field">
+                      Session duration (min)
+                      <input
+                        type="number"
+                        min="15"
+                        step="5"
+                        value={duration}
+                        onChange={e => setDuration(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="field">
+                      Student level
+                      <select value={level} onChange={e => setLevel(e.target.value)}>
+                        <option value="weak — needs basics">Weak — needs basics</option>
+                        <option value="average">Average</option>
+                        <option value="strong — needs challenge">Strong — needs challenge</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      Language
+                      <select value={language} onChange={e => setLanguage(e.target.value)}>
+                        {LANGS.map(l => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {currentTool === 'exam' && (
+                <>
+                  <label className="field">
+                    Topics to test
+                    <textarea
+                      rows={4}
+                      value={topics}
+                      onChange={e => setTopics(e.target.value)}
+                      placeholder="One topic per line (or fill automatically from class log)"
+                    />
+                  </label>
+                  <div className="actions" style={{ alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={handleFillTopicsFromLog}
+                    >
+                      Fill from class log
+                    </button>
+                  </div>
+
+                  <label className="field">
+                    Paper format
+                    <select
+                      value={examFormat}
+                      onChange={e => setExamFormat(e.target.value)}
+                    >
+                      <option value="custom">Choose question types</option>
+                      <option value="board">Board: MCQ + Creative Questions (CQ)</option>
+                      <option value="cq">Board: Creative Questions only (সৃজনশীল)</option>
+                      <option value="mcq">Board: MCQ only (বহুনির্বাচনি)</option>
+                    </select>
+                  </label>
+
+                  <div className="form-row">
+                    <label className="field">
+                      Total marks
+                      <input
+                        type="number"
+                        min="5"
+                        value={marks}
+                        onChange={e => setMarks(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="field">
+                      Time allowed (minutes)
+                      <input
+                        type="number"
+                        min="10"
+                        step="5"
+                        value={duration}
+                        onChange={e => setDuration(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="field">
+                      Difficulty
+                      <select
+                        value={difficulty}
+                        onChange={e => setDifficulty(e.target.value)}
+                      >
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                        <option value="mixed (easy → hard)">Mixed (easy → hard)</option>
+                        <option value="exam standard">Exam standard</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      Language
+                      <select
+                        value={language}
+                        onChange={e => setLanguage(e.target.value)}
+                      >
+                        {LANGS.map(l => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {examFormat === 'custom' && (
+                    <div className="field">
+                      <span className="muted small" style={{ fontWeight: 500 }}>
+                        Question types
+                      </span>
+                      <div className="checks" style={{ marginTop: '4px' }}>
+                        {EXAM_TYPES.map(t => (
+                          <label key={t} className="check">
+                            <input
+                              type="checkbox"
+                              checked={selectedTypes.includes(t)}
+                              onChange={e => {
+                                if (e.target.checked) setSelectedTypes([...selectedTypes, t]);
+                                else setSelectedTypes(selectedTypes.filter(x => x !== t));
+                              }}
+                            />{' '}
+                            {t}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={includeAnswerKey}
+                      onChange={e => setIncludeAnswerKey(e.target.checked)}
+                    />{' '}
+                    Include answer key (printed separately)
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={checkWithAI}
+                      onChange={e => setCheckWithAI(e.target.checked)}
+                    />{' '}
+                    Verify accuracy with automated second AI check
+                  </label>
+                </>
+              )}
+
+              {currentTool === 'worksheet' && (
+                <>
+                  <label className="field">
+                    Topic *
+                    <input
+                      required
+                      value={topic}
+                      onChange={e => setTopic(e.target.value)}
+                      placeholder="e.g. Trigonometry identities"
+                    />
+                  </label>
+                  <div className="form-row">
+                    <label className="field">
+                      Number of questions
+                      <input
+                        type="number"
+                        min="3"
+                        max="50"
+                        value={worksheetCount}
+                        onChange={e => setWorksheetCount(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="field">
+                      Difficulty
+                      <select
+                        value={difficulty}
+                        onChange={e => setDifficulty(e.target.value)}
+                      >
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                        <option value="mixed (easy → hard)">Mixed (easy → hard)</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      Language
+                      <select
+                        value={language}
+                        onChange={e => setLanguage(e.target.value)}
+                      >
+                        {LANGS.map(l => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={checkWithAI}
+                      onChange={e => setCheckWithAI(e.target.checked)}
+                    />{' '}
+                    Check answers with secondary AI review
+                  </label>
+                </>
+              )}
+
+              <label className="field">
+                Extra instructions (optional)
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="e.g. focus on word problems, follow Dhaka board SSC pattern"
+                />
+              </label>
+
+              <div className="form-actions">
+                <button type="submit" className="btn primary" disabled={!!busy}>
+                  {busy ? <span className="spinner" /> : `Generate ${AI_TOOLS[currentTool as keyof typeof AI_TOOLS].toLowerCase()}`}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Generated Result display */}
+          {result && (
+            <div className="card ai-output" style={{ marginTop: '16px' }}>
+              {result.error ? (
+                <div className="notice err">
+                  <b>Could not generate:</b> {result.error}
+                </div>
+              ) : (
+                <>
+                  <div className="card-head">
+                    <h2>{result.title}</h2>
+                    <div className="actions">
+                      {result.savedId ? (
+                        <span className="badge green">Saved</span>
+                      ) : (
+                        <button className="btn sm primary" onClick={handleSaveResult}>
+                          Save
+                        </button>
+                      )}
+                      <button
+                        className="btn sm"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(result.content);
+                          toast('Copied to clipboard', 'info');
+                        }}
+                      >
+                        Copy
+                      </button>
+                      <button
+                        className="btn sm"
+                        onClick={() => handlePrint(result.title, result.content)}
+                      >
+                        Print
+                      </button>
+                      {splitAnswerKey(result.content).answers && (
+                        <button
+                          className="btn sm"
+                          onClick={() =>
+                            handlePrint(result.title, splitAnswerKey(result.content).paper)
+                          }
+                        >
+                          Print without answers
+                        </button>
+                      )}
+                      {result.tool === 'exam' && (
+                        <button
+                          className="btn sm"
+                          onClick={() => {
+                            if (!result.savedId) handleSaveResult();
+                            const doc = state.docs.find(d => d.id === result.savedId) || {
+                              id: uid(),
+                              type: 'exam' as const,
+                              title: result.title,
+                              content: result.content,
+                              studentId: result.studentId,
+                              createdAt: new Date().toISOString(),
+                            };
+                            onStartExam(doc);
+                          }}
+                        >
+                          Start exam
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {result.check && (
+                    <div
+                      className={`notice ${result.check.ok ? 'green' : 'warn'}`}
+                      style={{ marginTop: '10px' }}
+                    >
+                      <b>
+                        {result.check.ok
+                          ? 'AI check: no mistakes detected.'
+                          : 'AI check found possible items to review:'}
+                      </b>
+                      {!result.check.ok && (
+                        <div
+                          className="doc"
+                          dangerouslySetInnerHTML={{
+                            __html: renderMarkdown(result.check.report),
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Revision input */}
+                  <form className="revise-row" onSubmit={handleRevise}>
+                    <input
+                      value={revisionInput}
+                      onChange={e => setRevisionInput(e.target.value)}
+                      placeholder='Refine output e.g. "Replace Q3 with a harder question" or "Translate to Bangla"'
+                    />
+                    <button type="submit" className="btn sm" disabled={!!busy}>
+                      {busy ? 'Working…' : 'Refine'}
+                    </button>
+                  </form>
+
+                  <div
+                    className="doc"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(result.content) }}
+                  />
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal for viewing a saved document */}
+      {viewingDoc && (
+        <div id="modal-root">
+          <div className="modal-backdrop" onClick={() => setViewingDoc(null)} />
+          <div className="modal">
+            <div className="modal-head">
+              <h2>{viewingDoc.title}</h2>
+              <button
+                className="icon-btn"
+                onClick={() => setViewingDoc(null)}
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="muted small" style={{ marginBottom: '10px' }}>
+                {viewingDoc.type} · {fmtDate(viewingDoc.createdAt.slice(0, 10))}
+                {viewingDoc.studentId ? ` · ${studentName(viewingDoc.studentId)}` : ''}
+              </div>
+              <div className="actions" style={{ marginBottom: '14px' }}>
+                {viewingDoc.type === 'exam' && (
+                  <button
+                    className="btn sm primary"
+                    onClick={() => {
+                      const doc = viewingDoc;
+                      setViewingDoc(null);
+                      onStartExam(doc);
+                    }}
+                  >
+                    Start exam
+                  </button>
+                )}
+                <button
+                  className="btn sm"
+                  onClick={() => handlePrint(viewingDoc.title, viewingDoc.content)}
+                >
+                  Print
+                </button>
+                {splitAnswerKey(viewingDoc.content).answers && (
+                  <button
+                    className="btn sm"
+                    onClick={() =>
+                      handlePrint(
+                        viewingDoc.title,
+                        splitAnswerKey(viewingDoc.content).paper
+                      )
+                    }
+                  >
+                    Print without answers
+                  </button>
+                )}
+                <button
+                  className="btn sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(viewingDoc.content);
+                    toast('Copied', 'info');
+                  }}
+                >
+                  Copy
+                </button>
+                <button
+                  className="btn sm danger"
+                  onClick={() => {
+                    deleteDoc(viewingDoc.id);
+                    toast('Document deleted', 'info');
+                    setViewingDoc(null);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+              <div
+                className="doc"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(viewingDoc.content) }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

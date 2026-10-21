@@ -1,0 +1,202 @@
+export type CycleType = 'days' | 'months' | 'classes';
+export type BillingType = 'start' | 'end';
+export type LessonStatus = 'taught' | 'absent' | 'cancelled';
+export type ExamQuestionType = 'mcq' | 'cq' | 'written';
+
+export interface ScheduleSlot {
+  day: number; // 0 = Sun, 6 = Sat
+  time: string; // HH:mm
+  duration: number; // minutes
+}
+
+export interface Student {
+  id: string;
+  name: string;
+  grade?: string;
+  curriculum?: string;
+  subjects?: string[];
+  phone?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  address?: string;
+  notes?: string;
+  schedule?: ScheduleSlot[];
+  active?: boolean;
+  createdAt?: string;
+}
+
+export interface Contract {
+  id: string;
+  studentId: string;
+  title: string;
+  fee: number;
+  cycleType: CycleType;
+  cycleLength: number;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string;
+  billing: BillingType;
+  status: 'active' | 'ended';
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface Lesson {
+  id: string;
+  studentId: string;
+  contractId?: string | null;
+  date: string; // YYYY-MM-DD
+  time?: string;
+  duration?: number | null;
+  status: LessonStatus;
+  subject?: string;
+  topics?: string;
+  homework?: string;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface Payment {
+  id: string;
+  studentId: string;
+  contractId?: string | null;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  method?: string;
+  note?: string;
+  createdAt?: string;
+}
+
+export interface Expense {
+  id: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  category: string;
+  note?: string;
+  createdAt?: string;
+}
+
+export interface Goal {
+  id: string;
+  name: string;
+  target: number;
+  saved: number;
+  targetDate?: string;
+  note?: string;
+  createdAt?: string;
+}
+
+export interface SavedDoc {
+  id: string;
+  type: 'plan' | 'exam' | 'worksheet';
+  title: string;
+  content: string;
+  studentId?: string | null;
+  meta?: Record<string, any>;
+  createdAt: string;
+}
+
+export interface MCQQuestion {
+  id: string;
+  n: string;
+  type: 'mcq';
+  stimulus?: string;
+  text: string;
+  figure?: string;
+  options: string[];
+  optionFigures?: string[];
+  answer: number | null;
+  guessed?: boolean;
+  marks: number;
+}
+
+export interface CQPart {
+  label: string;
+  text: string;
+  marks: number;
+  answer?: string;
+}
+
+export interface CQQuestion {
+  id: string;
+  n: string;
+  type: 'cq';
+  stimulus?: string;
+  figure?: string;
+  parts: CQPart[];
+}
+
+export interface WrittenQuestion {
+  id: string;
+  n: string;
+  type: 'written';
+  text: string;
+  figure?: string;
+  marks: number;
+  answer?: string;
+}
+
+export type Question = MCQQuestion | CQQuestion | WrittenQuestion;
+
+export interface Exam {
+  id: string;
+  docId?: string | null;
+  hash?: string;
+  title: string;
+  duration: number; // in minutes
+  instructions?: string;
+  cqChoose: number;
+  questions: Question[];
+  createdAt?: string;
+}
+
+export interface Attempt {
+  id: string;
+  examId: string;
+  title: string;
+  studentId?: string | null;
+  startedAt: number;
+  endsAt: number;
+  submittedAt?: number | null;
+  auto?: boolean;
+  status: 'running' | 'submitted' | 'marked';
+  answers: Record<string, any>;
+  marks: Record<string, any>;
+  aiMarks: Record<string, { marks: number; reason: string }>;
+  flags?: string[];
+  warned1?: boolean;
+  warned5?: boolean;
+}
+
+export interface AppSettings {
+  tutorName: string;
+  currency: string;
+  lastBackup?: string | null;
+}
+
+export interface AIState {
+  provider: 'gemini' | 'groq' | 'openrouter' | 'ollama';
+  models: Record<string, string>;
+  keys: Record<string, string>;
+}
+
+export interface AppState {
+  version: number;
+  settings: AppSettings;
+  ai: AIState;
+  students: Student[];
+  lessons: Lesson[];
+  contracts: Contract[];
+  payments: Payment[];
+  expenses: Expense[];
+  docs: SavedDoc[];
+  goals: Goal[];
+  exams: Exam[];
+  attempts: Attempt[];
+}
+
+export interface ToastMessage {
+  id: string;
+  msg: string;
+  type?: 'info' | 'error' | 'success';
+  action?: { label: string; fn: () => void };
+}
