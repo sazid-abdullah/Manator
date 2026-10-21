@@ -78,6 +78,37 @@ function sessionCookie(req, token, maxAge) {
   return `msid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(maxAge / 1000)}${secure}`;
 }
 
+async function syncBillingToFirestore(userId) {
+  if (!admin.apps.length) return;
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (!user) return;
+    const isPro = user.pro_until > Date.now();
+    const transactions = db.prepare('SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all() || [];
+
+    // We need the Firebase uid. It is likely that the user hasn't linked Firebase, or we need to find them by email.
+    // If the client creates the Firebase user, they have the same email.
+    try {
+      const fbUser = await admin.auth().getUserByEmail(user.email);
+      if (fbUser) {
+        await admin.firestore().doc(`users/${fbUser.uid}/data/billing`).set({
+          plan: isPro ? 'pro' : 'free',
+          proUntil: user.pro_until,
+          credits: user.credits,
+          updatedAt: Date.now(),
+          transactions: transactions
+        });
+      }
+    } catch (e) {
+      // User might not exist in Firebase Auth yet, that's fine.
+    }
+  } catch (err) {
+    console.error('Failed to sync billing to Firestore', err);
+  }
+}
+
+module.exports.syncBillingToFirestore = syncBillingToFirestore;
+
 // ── Accounts ─────────────────────────────────────────────────
 function currentUser(req) {
   const token = cookie(req, 'msid');
@@ -187,6 +218,7 @@ const routes = {
     if (owner) ownerSetupCode = null;
     counted();
     startSession(req, res, Number(r.lastInsertRowid));
+    syncBillingToFirestore(Number(r.lastInsertRowid));
     return { user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid), s) };
   },
 
@@ -232,9 +264,13 @@ const routes = {
       const out = await ai.generate(s, system, user, opts);
       const id = newId();
       db.prepare('INSERT INTO ai_requests (id, user_id, at, provider, model, charged) VALUES (?, ?, ?, ?, ?, ?)').run(id, u.id, Date.now(), out.provider, out.model, charged);
+      if (charged) syncBillingToFirestore(u.id);
       return { id, text: out.text, model: out.model, provider: ai.NAMES[out.provider], user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id), s) };
     } catch (err) {
-      if (charged) db.prepare('UPDATE users SET credits = credits + 1 WHERE id = ?').run(u.id);
+      if (charged) {
+        db.prepare('UPDATE users SET credits = credits + 1 WHERE id = ?').run(u.id);
+        syncBillingToFirestore(u.id);
+      }
       throw new HttpError(err.status && err.status >= 400 && err.status < 600 ? (err.status === 401 || err.status === 403 ? 503 : err.status) : 502, err.message);
     }
   },
@@ -260,6 +296,7 @@ const routes = {
     if (adsToday(u.id) >= s.adsPerDay) throw new HttpError(429, `That's all ${s.adsPerDay} ads for today.`);
     if (!db.prepare('UPDATE ad_views SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL').run(Date.now(), v.id).changes) throw new HttpError(400, 'This ad was already used.');
     db.prepare('UPDATE users SET credits = credits + ? WHERE id = ?').run(Math.max(0, Math.floor(s.adCredits)), u.id);
+    syncBillingToFirestore(u.id);
     return { user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id), s) };
   },
 
@@ -285,14 +322,17 @@ const routes = {
     if (!p || getSettings().gateway !== 'test') return redirect(res, '/#/settings?paid=0');
     if (f.get('action') === 'pay') pay.markPaid(p.id, 'TEST-' + newId(6), String(f.get('method') || ''));
     else pay.markFailed(p.id, 'cancelled');
+    syncBillingToFirestore(p.user_id);
     redirect(res, `/#/settings?paid=${f.get('action') === 'pay' ? 1 : 0}`);
   },
   'POST /pay/sslcommerz/return': async (req, res) => {
     const r = await pay.verifySSLCommerz(await readForm(req), getSettings()).catch(() => ({ ok: false }));
+    if (r && r.pay) syncBillingToFirestore(r.pay.user_id);
     redirect(res, `/#/settings?paid=${r.ok ? 1 : 0}`);
   },
   'POST /pay/sslcommerz/ipn': async (req, res) => {
-    await pay.verifySSLCommerz(await readForm(req), getSettings()).catch(() => {});
+    const r = await pay.verifySSLCommerz(await readForm(req), getSettings()).catch(() => ({ ok: false }));
+    if (r && r.pay) syncBillingToFirestore(r.pay.user_id);
     send(res, 200, { ok: true });
   },
 
@@ -361,6 +401,7 @@ const routes = {
     if (add) db.prepare('UPDATE users SET credits = MAX(0, credits + ?) WHERE id = ?').run(add, u.id);
     if (days > 0) db.prepare('UPDATE users SET pro_until = MAX(pro_until, ?) + ? WHERE id = ?').run(Date.now(), days * 86400e3, u.id);
     if (b.endPro) db.prepare('UPDATE users SET pro_until = 0 WHERE id = ?').run(u.id);
+    syncBillingToFirestore(u.id);
     return { target: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id), getSettings()) };
   },
   'GET /api/admin/payments': req => {

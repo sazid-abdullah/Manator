@@ -9,6 +9,7 @@ const CURRENCIES = ['৳', '₹', 'Rs ', '$', '£', '€', 'RM ', 'SAR '];
 export const SettingsView: React.FC = () => {
   const {
     state,
+    billingState,
     updateSettings,
     updateAI,
     loadDemoData,
@@ -134,6 +135,57 @@ export const SettingsView: React.FC = () => {
       </div>
 
       <div className="grid">
+        {/* Billing Card */}
+        <div className="card">
+          <h2>Account & Billing</h2>
+          {billingState ? (
+            <div>
+              <p>Current Plan: <strong>{billingState.plan === 'pro' ? 'Pro' : 'Free'}</strong></p>
+              {billingState.plan === 'pro' && (
+                <p>Pro Until: {fmtDate(new Date(billingState.proUntil).toISOString())}</p>
+              )}
+              {billingState.plan === 'free' && (
+                <p>AI Credits: <strong>{billingState.credits}</strong></p>
+              )}
+
+              {billingState.transactions && billingState.transactions.length > 0 && (
+                <div style={{ marginTop: '16px' }}>
+                  <h3>Transaction History</h3>
+                  <table className="table" style={{ marginTop: '8px' }}>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Plan</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billingState.transactions.map((t: any) => (
+                        <tr key={t.id}>
+                          <td>{fmtDate(new Date(t.created_at).toISOString())}</td>
+                          <td>{t.plan}</td>
+                          <td>{state.settings.currency}{t.amount}</td>
+                          <td>
+                            <span className={`badge ${t.status === 'paid' ? 'green' : t.status === 'pending' ? 'yellow' : 'red'}`}>
+                              {t.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <p>Current Plan: <strong>Free (BYOK)</strong></p>
+              <p className="muted small">Login or create an account to use the built-in AI credits, or use your own API keys below.</p>
+            </div>
+          )}
+        </div>
+
         {/* Profile Card */}
         <div className="card">
           <h2>Tutor Profile</h2>

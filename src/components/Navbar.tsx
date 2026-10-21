@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { auth, signOut, onAuthStateChanged } from '../services/firebase';
 import { User } from 'firebase/auth';
+import { useStore } from '../store/context';
 
 interface NavbarProps {
   currentRoute: string;
@@ -9,6 +10,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLoginClick }) => {
+  const { billingState } = useStore();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -152,11 +154,21 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
 
         {user ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+            {billingState ? (
+              <span className={`badge ${billingState.plan === 'pro' ? 'green' : 'blue'}`}>
+                {billingState.plan === 'pro' ? 'Pro' : `${billingState.credits} credits`}
+              </span>
+            ) : (
+              <span className="badge blue">Free (BYOK)</span>
+            )}
             <span style={{ color: 'var(--muted)' }} className="hide-mobile">{user.email}</span>
             <button onClick={() => signOut(auth)} className="btn xs">Logout</button>
           </div>
         ) : (
-          <button onClick={onLoginClick} className="btn xs primary">Login</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span className="badge blue hide-mobile">Free (BYOK)</span>
+            <button onClick={onLoginClick} className="btn xs primary">Login</button>
+          </div>
         )}
       </div>
 
