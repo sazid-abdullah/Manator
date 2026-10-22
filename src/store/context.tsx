@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AppState, BillingState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
+import { AppState, BillingState, Student, Batch, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
 import { isOwnerEmail } from '../utils/auth';
 import { auth, db, onAuthStateChanged } from '../services/firebase';
@@ -14,6 +14,7 @@ function defaultState(): AppState {
     settings: { tutorName: '', currency: '৳', lastBackup: null },
     ai: { provider: 'gemini', models: {}, keys: {} },
     students: [],
+    batches: [],
     lessons: [],
     contracts: [],
     payments: [],
@@ -35,6 +36,7 @@ function loadState(): AppState {
       ...parsed,
       settings: { ...defaultState().settings, ...(parsed.settings || {}) },
       ai: { ...defaultState().ai, ...(parsed.ai || {}) },
+      batches: Array.isArray(parsed.batches) ? parsed.batches : [],
     };
   } catch (e) {
     console.error('Failed to load state', e);
@@ -55,9 +57,22 @@ interface StoreContextType {
   studentName: (id: string) => string;
   saveStudent: (student: Omit<Student, 'id'> & { id?: string }) => string;
   deleteStudent: (id: string) => boolean;
+  saveBatch: (batch: Omit<Batch, 'id'> & { id?: string }) => string;
+  deleteBatch: (id: string) => boolean;
   saveContract: (contract: Omit<Contract, 'id'> & { id?: string }) => string;
   deleteContract: (id: string) => boolean;
   saveLesson: (lesson: Omit<Lesson, 'id'> & { id?: string }) => string;
+  logBatchLesson: (opts: {
+    batchId: string;
+    date: string;
+    time?: string;
+    duration?: number | null;
+    subject?: string;
+    topics?: string;
+    homework?: string;
+    notes?: string;
+    attendance: Record<string, Lesson['status']>; // studentId -> status
+  }) => void;
   deleteLesson: (id: string) => void;
   savePayment: (payment: Omit<Payment, 'id'> & { id?: string }) => string;
   deletePayment: (id: string) => void;
@@ -262,6 +277,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   }, []);
 
+  const saveBatch = useCallback((batch: Omit<Batch, 'id'> & { id?: string }) => {
+    const id = batch.id || uid();
+    const now = new Date().toISOString();
+    setState(prev => {
+      const batches = prev.batches || [];
+      const exists = batches.some(b => b.id === id);
+      const updated = exists
+        ? batches.map(b => b.id === id ? { ...b, ...batch, id } : b)
+        : [...batches, { ...batch, id, active: batch.active !== false, createdAt: batch.createdAt || now }];
+      return { ...prev, batches: updated };
+    });
+    return id;
+  }, []);
+
+  const deleteBatch = useCallback((id: string) => {
+    setState(prev => ({
+      ...prev,
+      batches: (prev.batches || []).filter(b => b.id !== id),
+    }));
+    return true;
+  }, []);
+
   const saveContract = useCallback((contract: Omit<Contract, 'id'> & { id?: string }) => {
     const id = contract.id || uid();
     const now = new Date().toISOString();
@@ -309,6 +346,80 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { ...prev, lessons: updated };
     });
     return id;
+  }, []);
+
+  const logBatchLesson = useCallback((opts: {
+    batchId: string;
+    batchSessionId?: string; // used for updating existing
+    date: string;
+    time?: string;
+    duration?: number | null;
+    subject?: string;
+    topics?: string;
+    homework?: string;
+    notes?: string;
+    attendance: Record<string, Lesson['status']>; // studentId -> status
+  }) => {
+    const batchSessionId = opts.batchSessionId || uid();
+    const now = new Date().toISOString();
+
+    setState(prev => {
+      const batch = (prev.batches || []).find(b => b.id === opts.batchId);
+      if (!batch) return prev;
+
+      let newLessons = [...prev.lessons];
+
+      batch.studentIds.forEach(studentId => {
+        const status = opts.attendance[studentId] || 'taught';
+
+        // Check if there's an existing lesson for this student in this batch session
+        const existingLessonIndex = opts.batchSessionId
+          ? newLessons.findIndex(l => l.batchSessionId === opts.batchSessionId && l.studentId === studentId)
+          : -1;
+
+        if (existingLessonIndex >= 0) {
+           // Update existing lesson
+           newLessons[existingLessonIndex] = {
+              ...newLessons[existingLessonIndex],
+              date: opts.date,
+              time: opts.time,
+              duration: opts.duration,
+              status,
+              subject: opts.subject,
+              topics: opts.topics,
+              homework: opts.homework,
+              notes: opts.notes,
+           };
+        } else {
+          // Find active contract for student
+          const activeContract = prev.contracts.find(
+            c => c.studentId === studentId && c.status !== 'ended' && c.startDate <= opts.date
+          );
+
+          newLessons.push({
+            id: uid(),
+            studentId,
+            batchId: opts.batchId,
+            batchSessionId,
+            contractId: activeContract?.id || null,
+            date: opts.date,
+            time: opts.time,
+            duration: opts.duration,
+            status,
+            subject: opts.subject,
+            topics: opts.topics,
+            homework: opts.homework,
+            notes: opts.notes,
+            createdAt: now,
+          });
+        }
+      });
+
+      return {
+        ...prev,
+        lessons: newLessons,
+      };
+    });
   }, []);
 
   const deleteLesson = useCallback((id: string) => {
@@ -528,6 +639,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...(data.ai || {}),
         keys: Object.keys(data.ai?.keys || {}).length ? data.ai.keys : currentKeys,
       },
+      batches: Array.isArray(data.batches) ? data.batches : [],
     });
   }, [state.ai.keys]);
 
@@ -559,7 +671,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       deleteStudent,
       saveContract,
       deleteContract,
+      saveBatch,
+      deleteBatch,
       saveLesson,
+      logBatchLesson,
       deleteLesson,
       savePayment,
       deletePayment,

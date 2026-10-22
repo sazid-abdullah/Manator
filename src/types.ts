@@ -9,6 +9,22 @@ export interface ScheduleSlot {
   duration: number; // minutes
 }
 
+export interface Batch {
+  id: string;
+  name: string;
+  grade?: string;
+  curriculum?: string;
+  subjects?: string[];
+  studentIds: string[];
+  schedule?: ScheduleSlot[];
+  defaultFee?: number;
+  defaultCycleType?: CycleType;
+  defaultCycleLength?: number;
+  notes?: string;
+  active?: boolean;
+  createdAt?: string;
+}
+
 export interface Student {
   id: string;
   name: string;
@@ -23,6 +39,7 @@ export interface Student {
   schedule?: ScheduleSlot[];
   active?: boolean;
   createdAt?: string;
+  batchId?: string | null;
 }
 
 export interface Contract {
@@ -44,6 +61,8 @@ export interface Lesson {
   id: string;
   studentId: string;
   contractId?: string | null;
+  batchId?: string | null;
+  batchSessionId?: string | null;
   date: string; // YYYY-MM-DD
   time?: string;
   duration?: number | null;
@@ -195,6 +214,7 @@ export interface AppState {
   settings: AppSettings;
   ai: AIState;
   students: Student[];
+  batches?: Batch[];
   lessons: Lesson[];
   contracts: Contract[];
   payments: Payment[];

@@ -107,6 +107,9 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
             <h1>
               {student.name}
               {student.active === false && <span className="badge">Archived</span>}
+              {(state.batches || []).filter(b => b.studentIds.includes(student.id)).map(b => (
+                <span key={b.id} className="badge blue" style={{ marginLeft: '6px' }}>👥 {b.name}</span>
+              ))}
             </h1>
             <div className="sub">
               {[student.grade, student.curriculum, (student.subjects || []).join(', ')].filter(Boolean).join(' · ')}
