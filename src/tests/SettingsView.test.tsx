@@ -68,10 +68,13 @@ describe('SettingsView AI Configuration', () => {
   });
 
   it('calls fetchModelList when API key is entered (debounced)', async () => {
-    (aiServices.fetchModelList as any).mockResolvedValue([
-      { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
-      { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' }
-    ]);
+    (aiServices.fetchModelList as any).mockResolvedValue({
+      list: [
+        { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
+        { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' }
+      ],
+      tier: 'free'
+    });
 
     renderWithStore();
 
@@ -84,9 +87,12 @@ describe('SettingsView AI Configuration', () => {
   });
 
   it('shows loaded models message when models are fetched', async () => {
-    (aiServices.fetchModelList as any).mockResolvedValue([
-      { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
-    ]);
+    (aiServices.fetchModelList as any).mockResolvedValue({
+      list: [
+        { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
+      ],
+      tier: 'free'
+    });
 
     renderWithStore();
 
@@ -94,7 +100,7 @@ describe('SettingsView AI Configuration', () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(screen.getByText('Loaded 1 available models for your API key')).toBeInTheDocument();
+      expect(screen.getByText('Free Tier API key detected — showing 1 free-tier compatible models')).toBeInTheDocument();
     }, { timeout: 1500 });
   });
 

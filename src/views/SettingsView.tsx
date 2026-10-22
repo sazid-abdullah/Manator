@@ -96,7 +96,7 @@ export const SettingsView: React.FC = () => {
       const res = await callAI('You are a connection test.', 'Reply with exactly: OK', {
         ...state,
         ai: updatedAI,
-      }, { maxTokens: 10, temperature: 0 });
+      }, { maxTokens: 10, temperature: 0, onFallback: (msg) => toast(msg, 'info') });
       toast(`Connected to ${pConfig.name}: "${res.trim()}"`, 'success');
     } catch (err: any) {
       toast(`Connection test failed: ${err.message}`, 'error');
@@ -109,7 +109,7 @@ export const SettingsView: React.FC = () => {
     setRefreshingModels(true);
     setModelsLoadedMsg('Loading models...');
     try {
-      const list = await fetchModelList(provider, {
+      const { list, tier } = await fetchModelList(provider, {
         ...state,
         ai: {
           ...state.ai,
@@ -118,7 +118,15 @@ export const SettingsView: React.FC = () => {
         },
       });
       setAvailableModels(list);
-      setModelsLoadedMsg(`Loaded ${list.length} available models for your API key`);
+
+      if (provider === 'gemini') {
+        const tierMsg = tier === 'free' ? 'Free Tier API key detected' : 'Paid Tier API key detected';
+        const displayMsg = tier === 'free' ? 'free-tier compatible models' : 'models';
+        setModelsLoadedMsg(`${tierMsg} — showing ${list.length} ${displayMsg}`);
+      } else {
+        setModelsLoadedMsg(`Loaded ${list.length} available models for your API key`);
+      }
+
       if (showToast) toast(`Found ${list.length} models for ${pConfig.name}`, 'success');
     } catch (err: any) {
       setAvailableModels([{ id: AI_PROVIDERS[provider].fallback, name: AI_PROVIDERS[provider].fallback }]);

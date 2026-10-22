@@ -62,10 +62,39 @@ export function autoModel(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama',
   return AI_PROVIDERS[provider]?.fallback || '';
 }
 
-export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama', state: AppState): Promise<{ id: string, name: string }[]> {
+export async function detectGeminiBillingTier(apiKey: string): Promise<'free' | 'paid'> {
+  if (!apiKey) return 'free';
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: "hi" }] }],
+        generationConfig: { maxOutputTokens: 1 },
+      }),
+    });
+
+    if (res.ok) {
+      return 'paid';
+    }
+
+    // Check if it's a quota error (limit: 0 or free tier indication)
+    // 429 RESOURCE_EXHAUSTED, 403, 400, 404
+    return 'free';
+  } catch (err) {
+    return 'free';
+  }
+}
+
+export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama', state: AppState): Promise<{ list: { id: string, name: string }[], tier?: 'free' | 'paid' }> {
   const key = (state.ai.keys[provider] || '').trim();
   let models: { id: string, name: string }[] = [];
+  let tier: 'free' | 'paid' | undefined = undefined;
+
   if (provider === 'gemini') {
+    tier = await detectGeminiBillingTier(key);
+
     const url = key ? `https://generativelanguage.googleapis.com/v1beta/models?key=${key}` : 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000';
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Gemini API error: ${res.statusText}`);
@@ -79,7 +108,29 @@ export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' 
         id: String(m.name || '').replace(/^models\//, ''),
         name: String(m.displayName || m.name || '').replace(/^models\//, ''),
       }))
-      .filter((m: any) => /^gemini-/.test(m.id) && !/embed|tts|image|live|audio|native|vision|computer-use|robotics|learnlm/.test(m.id))
+      .filter((m: any) => {
+        const lowerName = m.name.toLowerCase();
+        const lowerId = m.id.toLowerCase();
+        const combined = `${lowerId} ${lowerName}`;
+
+        // Strictly Filter Out Non-Text / Specialized Models
+        if (/banana|image|imagen|veo|transcribe|tts|audio|live|robotics|custom-tools|custom tools|embedding|aqa|learnlm|\bomni\b/.test(combined)) {
+          return false;
+        }
+
+        if (tier === 'free') {
+          // Free tier constraints
+          const isFreeTierModel = /flash|flash-lite|gemma|gemini-2\.5-pro/.test(lowerId);
+          const isPaidOnlyPro = /gemini-3\.1-pro|gemini-3-pro|gemini-pro-latest|gemini-4-argon|exp|preview/.test(lowerId) && !/gemini-2\.5-pro/.test(lowerId);
+
+          if (!isFreeTierModel) return false;
+          if (isPaidOnlyPro) return false;
+          return true;
+        } else {
+          // Paid tier
+          return /^gemini-/.test(m.id) || /gemma/.test(m.id);
+        }
+      })
       .sort((a: any, b: any) => {
         const aIndex = freeTierModels.indexOf(a.id);
         const bIndex = freeTierModels.indexOf(b.id);
@@ -106,16 +157,16 @@ export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' 
 
   const list = models.length ? models : [{ id: AI_PROVIDERS[provider].fallback, name: AI_PROVIDERS[provider].fallback }];
   const cache = readModelCache();
-  cache[provider] = { list, at: Date.now() };
+  cache[provider] = { list, tier, at: Date.now() };
   writeModelCache(cache);
-  return list;
+  return { list, tier };
 }
 
 export async function callAI(
   system: string,
   user: string,
   state: AppState,
-  opts: { temperature?: number; maxTokens?: number; json?: boolean; files?: Array<{ mimeType: string; data: string }> } = {}
+  opts: { temperature?: number; maxTokens?: number; json?: boolean; files?: Array<{ mimeType: string; data: string }>; onFallback?: (msg: string) => void } = {}
 ): Promise<string> {
   const provider = state.ai.provider;
   const key = (state.ai.keys[provider] || '').trim();
@@ -123,31 +174,50 @@ export async function callAI(
 
   if (provider === 'gemini') {
     if (!key) throw new Error('Google Gemini API key is missing. Add your free key in Settings → AI.');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-    const files = opts.files || [];
-    const contents = [
-      {
-        role: 'user',
-        parts: [
-          ...files.map(x => ({ inlineData: { mimeType: x.mimeType, data: x.data } })),
-          { text: user },
-        ],
-      },
-    ];
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: {
-          temperature: opts.temperature ?? 0.6,
-          maxOutputTokens: opts.maxTokens || 8192,
-          ...(opts.json ? { responseMimeType: 'application/json' } : {}),
+    const tryFetch = async (targetModel: string) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent`;
+      const files = opts.files || [];
+      const contents = [
+        {
+          role: 'user',
+          parts: [
+            ...files.map(x => ({ inlineData: { mimeType: x.mimeType, data: x.data } })),
+            { text: user },
+          ],
         },
-      }),
-    });
+      ];
+
+      return await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents,
+          generationConfig: {
+            temperature: opts.temperature ?? 0.6,
+            maxOutputTokens: opts.maxTokens || 8192,
+            ...(opts.json ? { responseMimeType: 'application/json' } : {}),
+          },
+        }),
+      });
+    };
+
+    let res = await tryFetch(model);
+
+    if (!res.ok && res.status === 429) {
+      const errClone = res.clone();
+      const errText = await errClone.text().catch(() => '');
+
+      // Automatic Runtime Fallback on `limit: 0` Quota Errors
+      if (errText.includes('limit: 0') || errText.includes('free_tier')) {
+        const fallbackModel = 'gemini-2.5-flash';
+        if (opts.onFallback && model !== fallbackModel) {
+          opts.onFallback(`Falling back to ${fallbackModel} due to Free Tier quota limits on ${model}.`);
+        }
+        res = await tryFetch(fallbackModel);
+      }
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

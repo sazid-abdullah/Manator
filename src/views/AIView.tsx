@@ -185,7 +185,7 @@ export const AIView: React.FC<AIViewProps> = ({
           ? examPrompt(formParams)
           : worksheetPrompt(formParams);
 
-      const generated = cleanDoc(await callAI(AI_SYSTEM, promptText, state));
+      const generated = cleanDoc(await callAI(AI_SYSTEM, promptText, state, { onFallback: (msg) => toast(msg, 'info') }));
 
       const newResult = {
         tool: currentTool,
@@ -220,7 +220,7 @@ export const AIView: React.FC<AIViewProps> = ({
         CHECK_SYSTEM,
         checkPrompt(r.tool, formParams, r.content),
         state,
-        { temperature: 0.2 }
+        { temperature: 0.2, onFallback: (msg) => toast(msg, 'info') }
       );
       const parsed = parseCheck(checkText);
       setResult(prev => (prev ? { ...prev, check: parsed } : null));
@@ -241,7 +241,8 @@ export const AIView: React.FC<AIViewProps> = ({
         await callAI(
           AI_SYSTEM,
           revisePrompt(result.tool, {}, result.content, revisionInput),
-          state
+          state,
+          { onFallback: (msg) => toast(msg, 'info') }
         )
       );
       setResult(prev =>

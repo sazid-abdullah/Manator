@@ -75,6 +75,7 @@ export const UploadPaperModal: React.FC<UploadPaperModalProps> = ({
         temperature: 0.1,
         json: true,
         files: filesData,
+        onFallback: (msg) => toast(msg, 'info'),
       });
 
       const parsedJson = JSON.parse(res);
