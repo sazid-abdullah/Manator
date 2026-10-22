@@ -105,7 +105,7 @@ export const MoneyView: React.FC<MoneyViewProps> = ({
     setAiBusy(true);
     try {
       const promptText = moneyPrompt(q, snap, state);
-      const text = await callAI(MONEY_SYSTEM, promptText, state, { temperature: 0.4, maxTokens: 2048 });
+      const text = await callAI(MONEY_SYSTEM, promptText, state, { temperature: 0.4, maxTokens: 2048, onFallback: (msg) => toast(msg, 'info') });
       setMoneyAIResult({ q, content: text });
     } catch (err: any) {
       toast(err.message || 'Could not fetch AI financial advice', 'error');

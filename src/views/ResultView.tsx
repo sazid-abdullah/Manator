@@ -123,7 +123,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ attemptId, onNavigate })
       }
 
       const promptText = markPrompt(items);
-      const res = await callAI(MARK_SYSTEM, promptText, state, { temperature: 0.2, json: true });
+      const res = await callAI(MARK_SYSTEM, promptText, state, { temperature: 0.2, json: true, onFallback: (msg) => toast(msg, 'info') });
       const parsed = JSON.parse(res);
 
       const out: Record<string, { marks: number; reason: string }> = {};
