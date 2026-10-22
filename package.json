@@ -1,6 +1,7 @@
 {
   "name": "tuitrix",
   "private": true,
+  "homepage": ".",
   "type": "module",
   "description": "Tuitrix tuition manager: static PWA plus an optional account/AI/payments server.",
   "scripts": {
