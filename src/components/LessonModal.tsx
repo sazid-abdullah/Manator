@@ -9,6 +9,7 @@ interface LessonModalProps {
   isOpen: boolean;
   lesson?: Lesson | null;
   initialStudentId?: string;
+  initialBatchId?: string;
   initialDate?: string;
   initialTime?: string;
   initialDuration?: number;
@@ -20,16 +21,21 @@ export const LessonModal: React.FC<LessonModalProps> = ({
   isOpen,
   lesson,
   initialStudentId,
+  initialBatchId,
   initialDate,
   initialTime,
   initialDuration,
   initialStatus,
   onClose,
 }) => {
-  const { state, saveLesson, deleteLesson, getStudent, studentName, toast } = useStore();
+  const { state, saveLesson, logBatchLesson, deleteLesson, getStudent, studentName, toast } = useStore();
   const isNew = !lesson;
 
+  const [mode, setMode] = useState<'single' | 'batch'>(initialBatchId ? 'batch' : 'single');
+  const [batchId, setBatchId] = useState(initialBatchId || '');
   const [studentId, setStudentId] = useState('');
+
+  const [attendance, setAttendance] = useState<Record<string, LessonStatus>>({});
   const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState(nowTime());
   const [duration, setDuration] = useState<number | ''>(60);
@@ -42,6 +48,8 @@ export const LessonModal: React.FC<LessonModalProps> = ({
 
   useEffect(() => {
     if (lesson) {
+      setMode(lesson.batchId ? 'batch' : 'single');
+      setBatchId(lesson.batchId || '');
       setStudentId(lesson.studentId);
       setDate(lesson.date);
       setTime(lesson.time || nowTime());
@@ -66,8 +74,38 @@ export const LessonModal: React.FC<LessonModalProps> = ({
       setTopics('');
       setHomework('');
       setNotes('');
+      if (initialBatchId) {
+         setMode('batch');
+         setBatchId(initialBatchId);
+      }
     }
-  }, [lesson, initialStudentId, initialDate, initialTime, initialDuration, initialStatus, isOpen]);
+  }, [lesson, initialStudentId, initialBatchId, initialDate, initialTime, initialDuration, initialStatus, isOpen]);
+
+  // Set default attendance when batch changes
+  useEffect(() => {
+    if (mode === 'batch' && batchId) {
+      const b = state.batches?.find(x => x.id === batchId);
+      if (b) {
+        const att: Record<string, LessonStatus> = {};
+
+        // If we are editing an existing batch session, populate with actual data
+        if (lesson?.batchSessionId) {
+          const siblingLessons = state.lessons.filter(l => l.batchSessionId === lesson.batchSessionId);
+          siblingLessons.forEach(l => {
+            att[l.studentId] = l.status;
+          });
+        } else {
+           // New batch lesson, default to all taught
+           b.studentIds.forEach(sid => att[sid] = 'taught');
+        }
+
+        setAttendance(att);
+        if (!subject && b.subjects?.[0]) {
+          setSubject(b.subjects[0]);
+        }
+      }
+    }
+  }, [mode, batchId, state.batches, lesson]);
 
   const student = getStudent(studentId);
   const studentContractsList = state.contracts.filter(c => c.studentId === studentId);
@@ -89,7 +127,28 @@ export const LessonModal: React.FC<LessonModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!studentId || !date) return;
+    if (!date) return;
+
+    if (mode === 'batch') {
+      if (!batchId) return;
+      logBatchLesson({
+        batchId,
+        batchSessionId: lesson?.batchSessionId || undefined,
+        date,
+        time: time || undefined,
+        duration: duration === '' ? null : Number(duration),
+        subject: subject.trim(),
+        topics: topics.trim(),
+        homework: homework.trim(),
+        notes: notes.trim(),
+        attendance
+      });
+      toast(lesson?.batchSessionId ? 'Batch class updated' : 'Batch class logged', 'success');
+      onClose();
+      return;
+    }
+
+    if (!studentId) return;
 
     const data: Omit<Lesson, 'id'> & { id?: string } = {
       id: lesson?.id,
@@ -139,8 +198,37 @@ export const LessonModal: React.FC<LessonModalProps> = ({
   return (
     <Modal title={isNew ? 'Log class' : 'Edit class'} isOpen={isOpen} onClose={onClose}>
       <form className="form" onSubmit={handleSubmit}>
-        <label className="field">
-          Student *
+        {isNew && (
+          <div className="toolbar" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px', marginBottom: '16px' }}>
+            <div className="seg">
+              <button type="button" className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')}>Single Student</button>
+              <button type="button" className={mode === 'batch' ? 'active' : ''} onClick={() => setMode('batch')}>Batch / Group</button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'batch' ? (
+          <label className="field">
+            Batch *
+            <select
+              name="batchId"
+              required
+              value={batchId}
+              onChange={e => setBatchId(e.target.value)}
+            >
+              <option value="">Select a batch...</option>
+              {(state.batches || [])
+                .filter(b => b.active !== false || b.id === batchId)
+                .map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        ) : (
+          <label className="field">
+            Student *
           <select
             name="studentId"
             required
@@ -156,6 +244,7 @@ export const LessonModal: React.FC<LessonModalProps> = ({
               ))}
           </select>
         </label>
+        )}
 
         <div className="form-row">
           <label className="field">
@@ -190,79 +279,145 @@ export const LessonModal: React.FC<LessonModalProps> = ({
           </label>
         </div>
 
-        <div className="field">
-          <span className="muted small" style={{ fontWeight: 500 }}>
-            Status
-          </span>
-          <div className="checks" style={{ marginTop: '4px' }}>
-            <label className="check">
-              <input
-                type="radio"
-                name="status"
-                value="taught"
-                checked={status === 'taught'}
-                onChange={() => setStatus('taught')}
-              />{' '}
-              Taught
-            </label>
-            <label className="check">
-              <input
-                type="radio"
-                name="status"
-                value="absent"
-                checked={status === 'absent'}
-                onChange={() => setStatus('absent')}
-              />{' '}
-              Student absent
-            </label>
-            <label className="check">
-              <input
-                type="radio"
-                name="status"
-                value="cancelled"
-                checked={status === 'cancelled'}
-                onChange={() => setStatus('cancelled')}
-              />{' '}
-              Cancelled
-            </label>
-          </div>
-        </div>
+        {mode === 'single' ? (
+          <>
+            <div className="field">
+              <span className="muted small" style={{ fontWeight: 500 }}>
+                Status
+              </span>
+              <div className="checks" style={{ marginTop: '4px' }}>
+                <label className="check">
+                  <input
+                    type="radio"
+                    name="status"
+                    value="taught"
+                    checked={status === 'taught'}
+                    onChange={() => setStatus('taught')}
+                  />{' '}
+                  Taught
+                </label>
+                <label className="check">
+                  <input
+                    type="radio"
+                    name="status"
+                    value="absent"
+                    checked={status === 'absent'}
+                    onChange={() => setStatus('absent')}
+                  />{' '}
+                  Student absent
+                </label>
+                <label className="check">
+                  <input
+                    type="radio"
+                    name="status"
+                    value="cancelled"
+                    checked={status === 'cancelled'}
+                    onChange={() => setStatus('cancelled')}
+                  />{' '}
+                  Cancelled
+                </label>
+              </div>
+            </div>
 
-        <div className="form-row">
-          <label className="field">
-            Subject
-            <input
-              name="subject"
-              value={subject}
-              onChange={e => setSubject(e.target.value)}
-              list="subject-list"
-              placeholder="e.g. Math"
-            />
-            <datalist id="subject-list">
-              {(student?.subjects || []).map((sub, i) => (
-                <option key={i} value={sub} />
-              ))}
-            </datalist>
-          </label>
+            <div className="form-row">
+              <label className="field">
+                Subject
+                <input
+                  name="subject"
+                  value={subject}
+                  onChange={e => setSubject(e.target.value)}
+                  list="subject-list"
+                  placeholder="e.g. Math"
+                />
+                <datalist id="subject-list">
+                  {(student?.subjects || []).map((sub, i) => (
+                    <option key={i} value={sub} />
+                  ))}
+                </datalist>
+              </label>
 
-          {studentContractsList.length > 0 && (
-            <label className="field">
-              Counts toward
-              <select
-                name="contractId"
-                value={contractId}
-                onChange={e => setContractId(e.target.value)}
-              >
-                {studentContractsList.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-                <option value="">Not linked to a contract</option>
-              </select>
-            </label>
-          )}
-        </div>
+              {studentContractsList.length > 0 && (
+                <label className="field">
+                  Counts toward
+                  <select
+                    name="contractId"
+                    value={contractId}
+                    onChange={e => setContractId(e.target.value)}
+                  >
+                    {studentContractsList.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                    <option value="">Not linked to a contract</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="form-row">
+              <label className="field">
+                Subject
+                <input
+                  name="subject"
+                  value={subject}
+                  onChange={e => setSubject(e.target.value)}
+                  placeholder="e.g. Math"
+                />
+              </label>
+            </div>
+
+            {batchId && (
+              <div className="field">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="muted small" style={{ fontWeight: 500 }}>Attendance</span>
+                  <button
+                    type="button"
+                    className="btn xs ghost"
+                    onClick={() => {
+                      const att = { ...attendance };
+                      Object.keys(att).forEach(k => att[k] = 'taught');
+                      setAttendance(att);
+                    }}
+                  >
+                    Mark All Taught
+                  </button>
+                </div>
+
+                <div className="card" style={{ padding: '8px', marginTop: '8px', maxHeight: '250px', overflowY: 'auto' }}>
+                  {state.batches?.find(b => b.id === batchId)?.studentIds.map(sid => {
+                    const s = getStudent(sid);
+                    if (!s) return null;
+                    return (
+                      <div key={sid} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ fontWeight: 500 }}>{s.name}</span>
+                        <div className="seg small">
+                          <button
+                            type="button"
+                            className={attendance[sid] === 'taught' ? 'active' : ''}
+                            onClick={() => setAttendance({...attendance, [sid]: 'taught'})}
+                          >Taught</button>
+                          <button
+                            type="button"
+                            className={attendance[sid] === 'absent' ? 'active' : ''}
+                            onClick={() => setAttendance({...attendance, [sid]: 'absent'})}
+                          >Absent</button>
+                          <button
+                            type="button"
+                            className={attendance[sid] === 'cancelled' ? 'active' : ''}
+                            onClick={() => setAttendance({...attendance, [sid]: 'cancelled'})}
+                          >Cancelled</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
         <label className="field">
           What did you teach?

@@ -6,21 +6,25 @@ import { Lesson } from '../types';
 
 interface ClassesViewProps {
   initialStudentFilter?: string;
+  initialBatchFilter?: string;
   onNavigate: (route: string, param?: string) => void;
-  onLogLesson: (opts: { studentId?: string; lesson?: Lesson }) => void;
+  onLogLesson: (opts: { studentId?: string; batchId?: string; lesson?: Lesson }) => void;
 }
 
 export const ClassesView: React.FC<ClassesViewProps> = ({
   initialStudentFilter = '',
+  initialBatchFilter = '',
   onNavigate,
   onLogLesson,
 }) => {
   const { state, studentName } = useStore();
   const [studentFilter, setStudentFilter] = useState(initialStudentFilter);
+  const [batchFilter, setBatchFilter] = useState(initialBatchFilter);
   const [monthFilter, setMonthFilter] = useState<string>(monthKey(todayISO()));
 
   const filtered = state.lessons
     .filter(l => !studentFilter || l.studentId === studentFilter)
+    .filter(l => !batchFilter || l.batchId === batchFilter)
     .filter(l => !monthFilter || monthKey(l.date) === monthFilter)
     .sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
 
@@ -41,18 +45,26 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
           <h1>Class log</h1>
           <div className="sub">What you taught, day by day</div>
         </div>
-        <button
-          className="btn primary"
-          onClick={() => onLogLesson({ studentId: studentFilter })}
-        >
-          + Log class
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            className="btn primary"
+            onClick={() => onLogLesson({ studentId: studentFilter })}
+          >
+            + Log class
+          </button>
+          <button
+            className="btn"
+            onClick={() => onLogLesson({ batchId: batchFilter || (state.batches?.[0]?.id ?? '') })}
+          >
+            + Log Batch
+          </button>
+        </div>
       </div>
 
       <div className="toolbar">
         <select
           value={studentFilter}
-          onChange={e => setStudentFilter(e.target.value)}
+          onChange={e => { setStudentFilter(e.target.value); setBatchFilter(''); }}
           aria-label="Filter by Student"
         >
           <option value="">All students</option>
@@ -62,6 +74,21 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
             </option>
           ))}
         </select>
+
+        {state.batches && state.batches.length > 0 && (
+          <select
+            value={batchFilter}
+            onChange={e => { setBatchFilter(e.target.value); setStudentFilter(''); }}
+            aria-label="Filter by Batch"
+          >
+            <option value="">All batches</option>
+            {state.batches.map(b => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         <input
           type="month"
@@ -115,6 +142,11 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                           {studentName(l.studentId)}
                         </a>
                         {l.subject ? ` · ${l.subject}` : ''}
+                        {l.batchId && (
+                          <span className="badge blue" style={{ marginLeft: '6px' }}>
+                            👥 {state.batches?.find(b => b.id === l.batchId)?.name || 'Batch'}
+                          </span>
+                        )}
                       </b>
                     </div>
                     <div className="meta muted small">
