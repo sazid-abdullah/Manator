@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Modal } from './Modal';
 import { auth, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from '../services/firebase';
+import { isOwnerEmail } from '../utils/auth';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -13,6 +14,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const handlePostAuth = (userEmail: string | null) => {
+    if (isOwnerEmail(userEmail)) {
+      setSuccessMsg('Welcome back, Owner! Admin privileges granted.');
+    } else {
+      setSuccessMsg('Authentication successful.');
+    }
+    setTimeout(() => {
+      setSuccessMsg('');
+      onClose();
+    }, 1500);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,14 +34,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setLoading(true);
 
     try {
+      let userCredential;
       if (isLogin) {
-        if (!auth) throw new Error('Firebase Auth is not initialized');
-        await signInWithEmailAndPassword(auth, email, password);
+        if (!auth) throw new Error('Offline mode: Firebase Auth is not initialized');
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
       } else {
-        if (!auth) throw new Error('Firebase Auth is not initialized');
-        await createUserWithEmailAndPassword(auth, email, password);
+        if (!auth) throw new Error('Offline mode: Firebase Auth is not initialized');
+        userCredential = await createUserWithEmailAndPassword(auth, email, password);
       }
-      onClose();
+      handlePostAuth(userCredential.user.email);
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
     } finally {
@@ -39,9 +54,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setError('');
     setLoading(true);
     try {
-      if (!auth || !googleProvider) throw new Error('Firebase Auth is not initialized');
-      await signInWithPopup(auth, googleProvider);
-      onClose();
+      if (!auth || !googleProvider) throw new Error('Offline mode: Firebase Auth is not initialized');
+      const userCredential = await signInWithPopup(auth, googleProvider);
+      handlePostAuth(userCredential.user.email);
     } catch (err: any) {
       setError(err.message || 'Google sign-in failed');
     } finally {
@@ -51,10 +66,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
+  if (!auth) {
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="Offline Mode">
+        <div style={{ padding: '16px', textAlign: 'center' }}>
+          <p>Authentication is currently unavailable because the application is running in offline mode.</p>
+          <button type="button" className="btn primary" onClick={onClose} style={{ marginTop: '16px' }}>
+            Close
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={isLogin ? 'Login' : 'Sign Up'}>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {error && <div className="notice warn">{error}</div>}
+        {successMsg && <div className="notice success" style={{ background: 'var(--success-bg)', color: 'var(--success-text)', padding: '8px 12px', borderRadius: '4px', fontSize: '0.9rem' }}>{successMsg}</div>}
 
         <label>
           Email
