@@ -95,9 +95,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let unsubscribe: () => void = () => {};
     if (auth) { unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        if (db) unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (doc) => {
-          if (doc.exists()) {
-            setBillingState(doc.data() as BillingState);
+        const isOwnerEmail = user.email?.toLowerCase() === (import.meta.env.VITE_OWNER_EMAIL || 'abdullahsazid109@gmail.com').toLowerCase();
+
+        if (db) unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (billingDoc) => {
+          if (isOwnerEmail) {
+            const data = billingDoc.data() as BillingState | undefined;
+            if (!billingDoc.exists() || data?.plan !== 'pro' || data?.credits < 999999) {
+              // Sync owner billing state back to Firestore so it's always Pro
+              const newState: BillingState = { plan: 'pro', credits: 999999, proUntil: Date.now() + 100 * 365 * 86400e3, updatedAt: Date.now(), transactions: data?.transactions || [] };
+              if (db) setDoc(doc(db, `users/${user.uid}/data/billing`), newState).catch(console.error);
+            } else {
+              setBillingState(data);
+            }
+          } else if (billingDoc.exists()) {
+            setBillingState(billingDoc.data() as BillingState);
           } else {
             setBillingState(null);
           }
@@ -110,7 +121,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const docSnap = await getDoc(docRef);
 
           if (docSnap.exists()) {
-            const remoteState = docSnap.data() as AppState;
+            let remoteState = docSnap.data() as AppState;
+            if (isOwnerEmail && (!remoteState.isOwner || !remoteState.isAdmin || remoteState.role !== 'owner')) {
+               remoteState = { ...remoteState, isOwner: true, isAdmin: true, role: 'owner' };
+               await setDoc(docRef, remoteState);
+            }
             setState(remoteState);
             localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
           } else {
@@ -126,13 +141,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                  dataToUpload = localParsed;
                }
             }
+            if (isOwnerEmail) {
+               dataToUpload = { ...dataToUpload, isOwner: true, isAdmin: true, role: 'owner' };
+            }
             if (needsMigration) {
                isMigratingRef.current = true;
                await setDoc(docRef, dataToUpload);
                isMigratingRef.current = false;
                setState(dataToUpload);
             } else {
-               await setDoc(docRef, state);
+               await setDoc(docRef, dataToUpload);
+               setState(dataToUpload);
             }
           }
         } catch (error) {

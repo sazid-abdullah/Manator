@@ -111,6 +111,10 @@ module.exports.syncBillingToFirestore = syncBillingToFirestore;
 
 // ── Accounts ─────────────────────────────────────────────────
 function currentUser(req) {
+  if (req.firebaseUser && req.firebaseUser.email) {
+    const u = db.prepare('SELECT * FROM users WHERE email = ?').get(req.firebaseUser.email);
+    if (u) return u;
+  }
   const token = cookie(req, 'msid');
   if (!token) return null;
   const s = db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(sha256(token));
@@ -213,8 +217,10 @@ const routes = {
     const owner = email === OWNER_EMAIL;
     if (owner) checkOwnerCode(b, fail);
     const s = getSettings();
-    const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(email, name, await hashPassword(password), owner ? 'owner' : 'user', Math.max(0, Math.floor(s.welcomeCredits)), Date.now());
+    const credits = owner ? 999999 : Math.max(0, Math.floor(s.welcomeCredits));
+    const proUntil = owner ? Date.now() + 100 * 365 * 86400e3 : 0;
+    const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, pro_until, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(email, name, await hashPassword(password), owner ? 'owner' : 'user', credits, proUntil, Date.now());
     if (owner) ownerSetupCode = null;
     counted();
     startSession(req, res, Number(r.lastInsertRowid));
@@ -227,11 +233,12 @@ const routes = {
     const fail = limitLogin(req, cleanEmail(b.email));
     const u = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail(b.email));
     if (!u || !(await checkPassword(String(b.password || ''), u.pass_hash))) { fail(); throw new HttpError(401, 'Wrong email or password.'); }
-    if (u.email === OWNER_EMAIL && u.role !== 'owner') {
-      checkOwnerCode(b, fail);
-      db.prepare("UPDATE users SET role = 'owner', perms = '' WHERE id = ?").run(u.id);
+    if (u.email === OWNER_EMAIL && (u.role !== 'owner' || u.pro_until < Date.now() || u.credits < 999999)) {
+      if (u.role !== 'owner') checkOwnerCode(b, fail);
+      db.prepare("UPDATE users SET role = 'owner', perms = '', credits = 999999, pro_until = ? WHERE id = ?").run(Date.now() + 100 * 365 * 86400e3, u.id);
       ownerSetupCode = null;
-      Object.assign(u, { role: 'owner', perms: '' });
+      Object.assign(u, { role: 'owner', perms: '', credits: 999999, pro_until: Date.now() + 100 * 365 * 86400e3 });
+      syncBillingToFirestore(u.id);
     }
     startSession(req, res, u.id);
     return { user: userJSON(u, getSettings()) };
@@ -452,6 +459,18 @@ const server = http.createServer(async (req, res) => {
     const idToken = authHeader.split('Bearer ')[1];
     try {
       req.firebaseUser = await admin.auth().verifyIdToken(idToken);
+      if (req.firebaseUser && req.firebaseUser.email && req.firebaseUser.email.toLowerCase() === OWNER_EMAIL) {
+        let u = db.prepare('SELECT * FROM users WHERE email = ?').get(OWNER_EMAIL);
+        if (!u) {
+           const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, pro_until, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+             .run(OWNER_EMAIL, req.firebaseUser.name || 'Owner', '', 'owner', 999999, Date.now() + 100 * 365 * 86400e3, Date.now());
+           u = db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
+           syncBillingToFirestore(u.id);
+        } else if (u.role !== 'owner' || u.pro_until < Date.now() || u.credits < 999999) {
+           db.prepare("UPDATE users SET role = 'owner', perms = '', credits = 999999, pro_until = ? WHERE id = ?").run(Date.now() + 100 * 365 * 86400e3, u.id);
+           syncBillingToFirestore(u.id);
+        }
+      }
     } catch (err) {
       // Token exists but is invalid/expired
       req.firebaseUser = null;

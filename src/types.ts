@@ -189,6 +189,9 @@ export interface BillingState {
 
 export interface AppState {
   version: number;
+  isOwner?: boolean;
+  isAdmin?: boolean;
+  role?: string;
   settings: AppSettings;
   ai: AIState;
   students: Student[];
