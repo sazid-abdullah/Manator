@@ -133,13 +133,61 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
           }}
           className="brand"
         >
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="28" height="28" rx="8" fill="#5b8cff" />
-            <path d="M7 20V9L14 5L21 9V20" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M11 13H17" stroke="white" strokeWidth="2" strokeLinecap="round" />
-            <path d="M14 10V18" stroke="white" strokeWidth="2" strokeLinecap="round" />
+          <svg width="28" height="28" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="bg_nav" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#161922"/>
+                <stop offset="100%" stopColor="#0b0d14"/>
+              </linearGradient>
+              <linearGradient id="grad1_nav" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#00f2fe"/>
+                <stop offset="100%" stopColor="#4facfe"/>
+              </linearGradient>
+              <linearGradient id="grad2_nav" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#4facfe"/>
+                <stop offset="100%" stopColor="#0015ff"/>
+              </linearGradient>
+              <linearGradient id="grad3_nav" x1="0%" y1="100%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#00f2fe"/>
+                <stop offset="100%" stopColor="#0015ff"/>
+              </linearGradient>
+              <linearGradient id="gradStemRight_nav" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#4facfe"/>
+                <stop offset="100%" stopColor="#0015ff"/>
+              </linearGradient>
+              <linearGradient id="gradStemLeft_nav" x1="100%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#00f2fe"/>
+                <stop offset="100%" stopColor="#4facfe"/>
+              </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="112" fill="url(#bg_nav)"/>
+            <g transform="translate(256, 216)">
+              <path d="M 0 -90 L -130 -90 L -170 -40 L -40 -40 Z" fill="url(#grad1_nav)" opacity="0.8" />
+              <path d="M 0 -90 L 130 -90 L 170 -40 L 40 -40 Z" fill="url(#grad2_nav)" opacity="0.9" />
+              <path d="M -40 -40 L -170 -40 L -130 10 L 0 10 Z" fill="url(#grad3_nav)" />
+              <path d="M 40 -40 L 170 -40 L 130 10 L 0 10 Z" fill="url(#grad2_nav)" />
+              <polygon points="0,-70 40,-40 0,10 -40,-40" fill="url(#grad1_nav)" opacity="0.95" />
+              <polygon points="0,-45 18,-30 0,-5 -18,-30" fill="#00f2fe" />
+              <path d="M 0 10 L -40 10 L -90 150 L 0 150 Z" fill="url(#gradStemLeft_nav)" />
+              <path d="M 0 10 L 40 10 L 90 150 L 0 150 Z" fill="url(#gradStemRight_nav)" />
+              <polygon points="-90,150 90,150 60,170 -60,170" fill="#00f2fe" opacity="0.8" />
+              <polyline points="-130,-90 -170,-40 -130,10" fill="none" stroke="#00f2fe" strokeWidth="3" opacity="0.8" />
+              <polyline points="130,-90 170,-40 130,10" fill="none" stroke="#00f2fe" strokeWidth="3" opacity="0.8" />
+              <line x1="-90" y1="150" x2="-60" y2="170" stroke="#00f2fe" strokeWidth="3" opacity="0.8" />
+              <line x1="90" y1="150" x2="60" y2="170" stroke="#00f2fe" strokeWidth="3" opacity="0.8" />
+              <line x1="0" y1="10" x2="0" y2="150" stroke="#00f2fe" strokeWidth="2" opacity="0.4" />
+            </g>
           </svg>
-          <span>Tuitrix</span>
+          <span style={{
+            background: 'linear-gradient(to right, #00f2fe, #4facfe, #0015ff)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            color: 'transparent',
+            fontWeight: 800,
+            letterSpacing: '0.02em',
+            fontFamily: 'system-ui, -apple-system, sans-serif'
+          }}>Tuitrix</span>
         </a>
 
         {deferredPrompt && !isInstalled && (
