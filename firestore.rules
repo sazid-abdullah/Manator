@@ -2,12 +2,19 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner() {
+      return request.auth != null && request.auth.token.email.lower() == 'abdullahsazid109@gmail.com';
+    }
+
     match /users/{userId}/data/billing {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
+      allow read: if request.auth != null && request.auth.uid == userId || isOwner();
+      allow write: if isOwner();
     }
     match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null && request.auth.uid == userId || isOwner();
+    }
+    match /{document=**} {
+      allow read, write: if isOwner();
     }
   }
 }
