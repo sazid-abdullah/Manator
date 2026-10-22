@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, BillingState, Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
+import { isOwnerEmail } from '../utils/auth';
 import { auth, db, onAuthStateChanged } from '../services/firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -95,10 +96,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let unsubscribe: () => void = () => {};
     if (auth) { unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const isOwnerEmail = user.email?.toLowerCase() === (import.meta.env.VITE_OWNER_EMAIL || 'abdullahsazid109@gmail.com').toLowerCase();
+        const isOwner = isOwnerEmail(user.email);
 
         if (db) unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (billingDoc) => {
-          if (isOwnerEmail) {
+          if (isOwner) {
             const data = billingDoc.data() as BillingState | undefined;
             if (!billingDoc.exists() || data?.plan !== 'pro' || data?.credits < 999999) {
               // Sync owner billing state back to Firestore so it's always Pro
@@ -122,7 +123,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           if (docSnap.exists()) {
             let remoteState = docSnap.data() as AppState;
-            if (isOwnerEmail && (!remoteState.isOwner || !remoteState.isAdmin || remoteState.role !== 'owner')) {
+            if (isOwner && (!remoteState.isOwner || !remoteState.isAdmin || remoteState.role !== 'owner')) {
                remoteState = { ...remoteState, isOwner: true, isAdmin: true, role: 'owner' };
                await setDoc(docRef, remoteState);
             }
@@ -141,7 +142,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                  dataToUpload = localParsed;
                }
             }
-            if (isOwnerEmail) {
+            if (isOwner) {
                dataToUpload = { ...dataToUpload, isOwner: true, isAdmin: true, role: 'owner' };
             }
             if (needsMigration) {

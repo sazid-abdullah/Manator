@@ -206,52 +206,6 @@ function cleanEmail(e) { return String(e || '').trim().toLowerCase(); }
 const routes = {
   'GET /api/me': req => { const s = getSettings(); return { user: userJSON(currentUser(req), s), config: configJSON(s) }; },
 
-  'POST /api/signup': async (req, res) => {
-    const b = await readJSON(req);
-    const fail = limitLogin(req, cleanEmail(b.email));
-    const counted = limitSignup(req);
-    const email = cleanEmail(b.email), password = String(b.password || ''), name = String(b.name || '').trim().slice(0, 80);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new HttpError(400, 'Enter a valid email address.');
-    if (password.length < 8) throw new HttpError(400, 'Use a password of at least 8 characters.');
-    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) { fail(); throw new HttpError(409, 'An account with this email already exists. Sign in instead.'); }
-    const owner = email === OWNER_EMAIL;
-    if (owner) checkOwnerCode(b, fail);
-    const s = getSettings();
-    const credits = owner ? 999999 : Math.max(0, Math.floor(s.welcomeCredits));
-    const proUntil = owner ? Date.now() + 100 * 365 * 86400e3 : 0;
-    const r = db.prepare('INSERT INTO users (email, name, pass_hash, role, credits, pro_until, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(email, name, await hashPassword(password), owner ? 'owner' : 'user', credits, proUntil, Date.now());
-    if (owner) ownerSetupCode = null;
-    counted();
-    startSession(req, res, Number(r.lastInsertRowid));
-    syncBillingToFirestore(Number(r.lastInsertRowid));
-    return { user: userJSON(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid), s) };
-  },
-
-  'POST /api/login': async (req, res) => {
-    const b = await readJSON(req);
-    const fail = limitLogin(req, cleanEmail(b.email));
-    const u = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail(b.email));
-    if (!u || !(await checkPassword(String(b.password || ''), u.pass_hash))) { fail(); throw new HttpError(401, 'Wrong email or password.'); }
-    if (u.email === OWNER_EMAIL && (u.role !== 'owner' || u.pro_until < Date.now() || u.credits < 999999)) {
-      if (u.role !== 'owner') checkOwnerCode(b, fail);
-      db.prepare("UPDATE users SET role = 'owner', perms = '', credits = 999999, pro_until = ? WHERE id = ?").run(Date.now() + 100 * 365 * 86400e3, u.id);
-      ownerSetupCode = null;
-      Object.assign(u, { role: 'owner', perms: '', credits: 999999, pro_until: Date.now() + 100 * 365 * 86400e3 });
-      syncBillingToFirestore(u.id);
-    }
-    startSession(req, res, u.id);
-    return { user: userJSON(u, getSettings()) };
-  },
-
-  'POST /api/logout': async (req, res) => {
-    await readJSON(req);
-    const token = cookie(req, 'msid');
-    if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
-    res.setHeader('Set-Cookie', sessionCookie(req, '', 0));
-    return { ok: true };
-  },
-
   'POST /api/ai': async req => {
     const u = needUser(req);
     const b = await readJSON(req, AI_BODY_MAX);
