@@ -35,7 +35,7 @@ export const AI_PROVIDERS = {
 
 const MODEL_CACHE_KEY = 'tuitrix_models';
 
-function readModelCache(): Record<string, any> {
+export function readModelCache(): Record<string, any> {
   try {
     const c = JSON.parse(localStorage.getItem(MODEL_CACHE_KEY) || '{}');
     return c && typeof c === 'object' ? c : {};
@@ -56,24 +56,38 @@ export function autoModel(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama',
   if (state.ai.models[provider]) return state.ai.models[provider];
   const cache = readModelCache()[provider];
   if (cache && Array.isArray(cache.list) && cache.list.length > 0) {
-    return cache.list[0];
+    const first = cache.list[0];
+    return typeof first === 'object' && first !== null && first.id ? first.id : String(first);
   }
   return AI_PROVIDERS[provider]?.fallback || '';
 }
 
-export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama', state: AppState): Promise<string[]> {
+export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' | 'ollama', state: AppState): Promise<{ id: string, name: string }[]> {
   const key = (state.ai.keys[provider] || '').trim();
-  let ids: string[] = [];
+  let models: { id: string, name: string }[] = [];
   if (provider === 'gemini') {
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
-      headers: key ? { 'x-goog-api-key': key } : {},
-    });
+    const url = key ? `https://generativelanguage.googleapis.com/v1beta/models?key=${key}` : 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000';
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`Gemini API error: ${res.statusText}`);
     const d = await res.json();
-    ids = (d.models || [])
+
+    const freeTierModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', 'gemini-2.0-flash'];
+
+    models = (d.models || [])
       .filter((m: any) => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map((m: any) => String(m.name || '').replace(/^models\//, ''))
-      .filter((id: string) => /^gemini-/.test(id) && !/embed|tts|image|live|audio|native|vision|computer-use|robotics|learnlm/.test(id));
+      .map((m: any) => ({
+        id: String(m.name || '').replace(/^models\//, ''),
+        name: String(m.displayName || m.name || '').replace(/^models\//, ''),
+      }))
+      .filter((m: any) => /^gemini-/.test(m.id) && !/embed|tts|image|live|audio|native|vision|computer-use|robotics|learnlm/.test(m.id))
+      .sort((a: any, b: any) => {
+        const aIndex = freeTierModels.indexOf(a.id);
+        const bIndex = freeTierModels.indexOf(b.id);
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        return a.id.localeCompare(b.id);
+      });
   } else {
     const urls: Record<string, string> = {
       groq: 'https://api.groq.com/openai/v1/models',
@@ -85,10 +99,12 @@ export async function fetchModelList(provider: 'gemini' | 'groq' | 'openrouter' 
     });
     if (!res.ok) throw new Error(`${provider} API error: ${res.statusText}`);
     const data = (await res.json()).data || [];
-    ids = data.map((m: any) => String(m.id)).filter((id: string) => !/whisper|tts|guard|safety|embed|playai|distil|coder/.test(id));
+    models = data
+      .map((m: any) => ({ id: String(m.id), name: String(m.name || m.id) }))
+      .filter((m: any) => !/whisper|tts|guard|safety|embed|playai|distil|coder/.test(m.id));
   }
 
-  const list = ids.length ? ids : [AI_PROVIDERS[provider].fallback];
+  const list = models.length ? models : [{ id: AI_PROVIDERS[provider].fallback, name: AI_PROVIDERS[provider].fallback }];
   const cache = readModelCache();
   cache[provider] = { list, at: Date.now() };
   writeModelCache(cache);
@@ -135,6 +151,9 @@ export async function callAI(
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 429) {
+        throw new Error(`Quota exceeded or model unavailable. Try switching to gemini-2.5-flash or gemini-2.5-flash-lite. (${err.error?.message || res.status})`);
+      }
       throw new Error(err.error?.message || `Gemini API error: ${res.status}`);
     }
     const data = await res.json();
