@@ -38,7 +38,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    let unsubscribe = () => {};
+    if (auth) unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
     return () => unsubscribe();
@@ -162,7 +163,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
               <span className="badge blue">Free (BYOK)</span>
             )}
             <span style={{ color: 'var(--muted)' }} className="hide-mobile">{user.email}</span>
-            <button onClick={() => signOut(auth)} className="btn xs">Logout</button>
+            <button onClick={() => auth && signOut(auth)} className="btn xs">Logout</button>
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

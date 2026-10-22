@@ -92,9 +92,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     let unsubscribeBilling: () => void;
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribe: () => void = () => {};
+    if (auth) { unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (doc) => {
+        if (db) unsubscribeBilling = onSnapshot(doc(db, `users/${user.uid}/data/billing`), (doc) => {
           if (doc.exists()) {
             setBillingState(doc.data() as BillingState);
           } else {
@@ -104,6 +105,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         authLoadedRef.current = true;
         try {
+          if (!db) return;
           const docRef = doc(db, `users/${user.uid}/data/appState`);
           const docSnap = await getDoc(docRef);
 
@@ -152,6 +154,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         authLoadedRef.current = false;
       }
     });
+    }
 
     return () => {
       unsubscribe();
@@ -164,10 +167,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       // Write to firestore if logged in and not currently migrating
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (user && authLoadedRef.current && !isMigratingRef.current) {
-        const docRef = doc(db, `users/${user.uid}/data/appState`);
-        setDoc(docRef, state).catch(e => console.error('Failed to save to Firestore', e));
+        if (db) {
+          const docRef = doc(db, `users/${user.uid}/data/appState`);
+          setDoc(docRef, state).catch(e => console.error('Failed to save to Firestore', e));
+        }
       }
     } catch (e) {
       console.error('Failed to save state', e);
