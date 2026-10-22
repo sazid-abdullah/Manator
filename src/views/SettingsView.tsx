@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/context';
-import { AI_PROVIDERS, fetchModelList, callAI, autoModel } from '../services/ai';
+import { AI_PROVIDERS, fetchModelList, callAI, autoModel, readModelCache } from '../services/ai';
 import { todayISO, fmtDate } from '../utils/date';
 import { ConfirmModal } from '../components/ConfirmModal';
 
@@ -30,8 +30,30 @@ export const SettingsView: React.FC = () => {
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [eraseConfirmOpen, setEraseConfirmOpen] = useState(false);
   const [demoConfirmOpen, setDemoConfirmOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{id: string, name: string}[]>([]);
+  const [modelsLoadedMsg, setModelsLoadedMsg] = useState('');
+  const apiKeyTimeout = useRef<number | null>(null);
 
   const pConfig = AI_PROVIDERS[provider];
+
+  useEffect(() => {
+    const cache = readModelCache()[provider];
+    if (cache && Array.isArray(cache.list)) {
+      setAvailableModels(cache.list.map((m: any) => typeof m === 'object' && m !== null ? m : { id: String(m), name: String(m) }));
+    } else {
+      setAvailableModels([{ id: AI_PROVIDERS[provider].fallback, name: AI_PROVIDERS[provider].fallback }]);
+    }
+    setModelsLoadedMsg('');
+  }, [provider]);
+
+  useEffect(() => {
+    if (apiKeyTimeout.current) window.clearTimeout(apiKeyTimeout.current);
+    if (!apiKey.trim()) return;
+    apiKeyTimeout.current = window.setTimeout(() => {
+      handleRefreshModels(false);
+    }, 1000);
+    return () => { if (apiKeyTimeout.current) window.clearTimeout(apiKeyTimeout.current); };
+  }, [apiKey]);
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,8 +105,9 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleRefreshModels = async () => {
+  const handleRefreshModels = async (showToast: boolean = true) => {
     setRefreshingModels(true);
+    setModelsLoadedMsg('Loading models...');
     try {
       const list = await fetchModelList(provider, {
         ...state,
@@ -94,9 +117,13 @@ export const SettingsView: React.FC = () => {
           keys: { ...state.ai.keys, [provider]: apiKey.trim() },
         },
       });
-      toast(`Found ${list.length} models for ${pConfig.name}`, 'success');
+      setAvailableModels(list);
+      setModelsLoadedMsg(`Loaded ${list.length} available models for your API key`);
+      if (showToast) toast(`Found ${list.length} models for ${pConfig.name}`, 'success');
     } catch (err: any) {
-      toast(`Could not load models: ${err.message}`, 'error');
+      setAvailableModels([{ id: AI_PROVIDERS[provider].fallback, name: AI_PROVIDERS[provider].fallback }]);
+      setModelsLoadedMsg('Using default fallback models');
+      if (showToast) toast(`Could not load models: ${err.message}`, 'error');
     } finally {
       setRefreshingModels(false);
     }
@@ -271,21 +298,33 @@ export const SettingsView: React.FC = () => {
 
             <label className="field">
               Model
-              <input
+              <select
                 value={selectedModel}
                 onChange={e => setSelectedModel(e.target.value)}
-                placeholder={`Auto default (${autoModel(provider, state)})`}
-              />
+              >
+                <option value="">Auto default ({autoModel(provider, state)})</option>
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.id}
+                  </option>
+                ))}
+              </select>
             </label>
+
+            {modelsLoadedMsg && (
+              <p className="muted small" style={{ marginTop: '-8px', marginBottom: '16px' }}>
+                {modelsLoadedMsg}
+              </p>
+            )}
 
             <div className="form-actions">
               <button
                 type="button"
                 className="btn"
-                onClick={handleRefreshModels}
+                onClick={() => handleRefreshModels(true)}
                 disabled={refreshingModels}
               >
-                {refreshingModels ? 'Checking…' : 'Refresh model list'}
+                {refreshingModels ? 'Loading models...' : 'Refresh model list'}
               </button>
               <button
                 type="button"
