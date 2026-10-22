@@ -21,8 +21,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
     try {
       if (isLogin) {
+        if (!auth) throw new Error('Firebase Auth is not initialized');
         await signInWithEmailAndPassword(auth, email, password);
       } else {
+        if (!auth) throw new Error('Firebase Auth is not initialized');
         await createUserWithEmailAndPassword(auth, email, password);
       }
       onClose();
@@ -37,6 +39,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setError('');
     setLoading(true);
     try {
+      if (!auth || !googleProvider) throw new Error('Firebase Auth is not initialized');
       await signInWithPopup(auth, googleProvider);
       onClose();
     } catch (err: any) {
