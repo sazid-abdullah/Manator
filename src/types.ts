@@ -191,6 +191,10 @@ export interface AppSettings {
   tutorName: string;
   currency: string;
   lastBackup?: string | null;
+  credentials?: string;
+  brandTitle?: string;
+  showPrintHeader?: boolean;
+  showPrintWatermark?: boolean;
 }
 
 export interface AIState {

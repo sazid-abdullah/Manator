@@ -24,6 +24,10 @@ export const SettingsView: React.FC = () => {
   } = useStore();
 
   const [tutorName, setTutorName] = useState(state.settings.tutorName || '');
+  const [credentials, setCredentials] = useState(state.settings.credentials || '');
+  const [brandTitle, setBrandTitle] = useState(state.settings.brandTitle || '');
+  const [showPrintHeader, setShowPrintHeader] = useState(state.settings.showPrintHeader ?? true);
+  const [showPrintWatermark, setShowPrintWatermark] = useState(state.settings.showPrintWatermark ?? true);
   const [currency, setCurrency] = useState(state.settings.currency || '৳');
   const [provider, setProvider] = useState(state.ai.provider);
   const [apiKey, setApiKey] = useState(state.ai.keys[provider] || '');
@@ -97,7 +101,14 @@ export const SettingsView: React.FC = () => {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings({ tutorName: tutorName.trim(), currency });
+    updateSettings({
+      tutorName: tutorName.trim(),
+      currency,
+      credentials: credentials.trim(),
+      brandTitle: brandTitle.trim(),
+      showPrintHeader,
+      showPrintWatermark,
+    });
     toast('Profile saved', 'success');
   };
 
@@ -468,6 +479,44 @@ export const SettingsView: React.FC = () => {
                 </select>
               </label>
             </div>
+
+            <div className="form-row">
+              <label className="field">
+                Academic Credentials / Subtitle (Optional)
+                <input
+                  value={credentials}
+                  onChange={e => setCredentials(e.target.value)}
+                  placeholder="e.g. B.Sc. in CSE, North South University"
+                />
+              </label>
+              <label className="field">
+                Custom Coaching / Header Title (Optional)
+                <input
+                  value={brandTitle}
+                  onChange={e => setBrandTitle(e.target.value)}
+                  placeholder="e.g. Sazid's Physics & Math Care"
+                />
+              </label>
+            </div>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={showPrintHeader}
+                onChange={e => setShowPrintHeader(e.target.checked)}
+              />{' '}
+              Show Branded Header on Printed Sheets
+            </label>
+
+            <label className="check" style={{ marginTop: '8px', marginBottom: '16px' }}>
+              <input
+                type="checkbox"
+                checked={showPrintWatermark}
+                onChange={e => setShowPrintWatermark(e.target.checked)}
+              />{' '}
+              Show Diagonal Watermark on Printed Sheets
+            </label>
+
             <div className="form-actions">
               <button type="submit" className="btn primary">
                 Save profile
