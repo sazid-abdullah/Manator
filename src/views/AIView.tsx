@@ -104,6 +104,13 @@ export const AIView: React.FC<AIViewProps> = ({
   const [docsFilterStudent, setDocsFilterStudent] = useState('');
   const [viewingDoc, setViewingDoc] = useState<SavedDoc | null>(null);
 
+  // Print Settings
+  const [printMarks, setPrintMarks] = useState('');
+  const [printTime, setPrintTime] = useState('');
+  const [printDate, setPrintDate] = useState('');
+  const [localShowHeader, setLocalShowHeader] = useState(state.settings.showPrintHeader ?? true);
+  const [localShowWatermark, setLocalShowWatermark] = useState(state.settings.showPrintWatermark ?? true);
+
   // Prefill student details if student changes
   useEffect(() => {
     if (studentId) {
@@ -286,14 +293,60 @@ export const AIView: React.FC<AIViewProps> = ({
     document.body.appendChild(frame);
     const doc = frame.contentDocument;
     if (!doc) return;
+
+    let headerHtml = '';
+    let watermarkHtml = '';
+    let footerHtml = '';
+
+    const tutorNameStr = state.settings.tutorName || '';
+    const brandTitleStr = state.settings.brandTitle || 'EXAM / LECTURE SHEET';
+    const credentialsStr = state.settings.credentials || '';
+
+    if (localShowHeader) {
+      const parts = [tutorNameStr, credentialsStr].filter(Boolean);
+      const attribution = parts.length > 0 ? `Prepared by: ${parts.join(' | ')}` : '';
+
+      headerHtml = `
+        <div class="branded-header" style="text-align:center; margin-bottom: 20px; border-bottom: 2px solid #222; padding-bottom: 12px;">
+          <h1 style="margin:0; font-size:18pt;">${brandTitleStr}</h1>
+          ${attribution ? `<div style="font-size:11pt; color:#444; margin-top:4px;">${attribution}</div>` : ''}
+          <div style="display:flex; justify-content:space-between; margin-top:16px; font-size:11pt;">
+            <span><strong>Student Name:</strong> ______________________</span>
+            <span><strong>Date:</strong> ${printDate || '__________'}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:11pt;">
+            <span><strong>Time Allowed:</strong> ${printTime || '__________'}</span>
+            <span><strong>Total Marks:</strong> ${printMarks || '__________'}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    if (localShowWatermark) {
+      const wmText = state.settings.brandTitle || state.settings.tutorName || 'Tuitrix';
+      watermarkHtml = `<div class="watermark">${wmText}</div>`;
+      footerHtml = `<div class="print-footer">Prepared by ${tutorNameStr || 'Tutor'} &bull; Powered by Tuitrix</div>`;
+    }
+
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>
-      body{font:12pt/1.5 'Segoe UI','Noto Sans Bengali',Arial,sans-serif;color:#111;margin:18mm}
+      @page { margin: 12mm; }
+      body { font:12pt/1.5 'Segoe UI','Noto Sans Bengali',Arial,sans-serif; color:#111; margin:0; position:relative; min-height: 100vh; }
       h2{font-size:16pt;margin:14pt 0 6pt}h3{font-size:13pt;margin:12pt 0 4pt}h4,h5{font-size:12pt;margin:10pt 0 4pt}
       table{border-collapse:collapse;width:100%;margin:6pt 0}th,td{border:1px solid #999;padding:4pt 6pt;text-align:left;vertical-align:top}
       hr{border:none;border-top:1px dashed #999;margin:14pt 0}ul,ol{margin:4pt 0 4pt 20pt}p{margin:4pt 0}
       pre,code{font-family:Consolas,monospace}blockquote{border-left:3px solid #999;padding-left:8pt;color:#444}
-    </style></head><body>${renderMarkdown(md)}</body></html>`);
+      .watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 6rem; opacity: 0.04; pointer-events: none; z-index: -1; white-space: nowrap; text-align: center; color: #000; font-weight: bold; }
+      .print-footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 9pt; color: #666; padding: 10px 0; border-top: 1px solid #ddd; }
+      .content { padding-bottom: 40px; }
+    </style></head><body>
+      ${watermarkHtml}
+      <div class="content">
+        ${headerHtml}
+        ${renderMarkdown(md)}
+      </div>
+      ${footerHtml}
+    </body></html>`);
     doc.close();
     setTimeout(() => {
       frame.contentWindow?.focus();
@@ -756,6 +809,33 @@ export const AIView: React.FC<AIViewProps> = ({
                 </div>
               ) : (
                 <>
+                  <div className="print-controls" style={{ marginBottom: '16px', padding: '12px', background: 'var(--card2)', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                      <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                        Total Marks
+                        <input value={printMarks} onChange={e => setPrintMarks(e.target.value)} placeholder="e.g. 50" />
+                      </label>
+                      <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                        Time Allowed
+                        <input value={printTime} onChange={e => setPrintTime(e.target.value)} placeholder="e.g. 45 Mins" />
+                      </label>
+                      <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                        Date
+                        <input value={printDate} onChange={e => setPrintDate(e.target.value)} placeholder="e.g. 12/04/2024" />
+                      </label>
+                    </div>
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                      <label className="check">
+                        <input type="checkbox" checked={localShowHeader} onChange={e => setLocalShowHeader(e.target.checked)} />
+                        Show Branded Header
+                      </label>
+                      <label className="check">
+                        <input type="checkbox" checked={localShowWatermark} onChange={e => setLocalShowWatermark(e.target.checked)} />
+                        Show Watermark
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="card-head">
                     <h2>{result.title}</h2>
                     <div className="actions">
@@ -877,6 +957,34 @@ export const AIView: React.FC<AIViewProps> = ({
                 {viewingDoc.type} · {fmtDate(viewingDoc.createdAt.slice(0, 10))}
                 {viewingDoc.studentId ? ` · ${studentName(viewingDoc.studentId)}` : ''}
               </div>
+
+              <div className="print-controls" style={{ marginBottom: '16px', padding: '12px', background: 'var(--card2)', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                  <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                    Total Marks
+                    <input value={printMarks} onChange={e => setPrintMarks(e.target.value)} placeholder="e.g. 50" />
+                  </label>
+                  <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                    Time Allowed
+                    <input value={printTime} onChange={e => setPrintTime(e.target.value)} placeholder="e.g. 45 Mins" />
+                  </label>
+                  <label className="field" style={{ flex: 1, minWidth: '100px' }}>
+                    Date
+                    <input value={printDate} onChange={e => setPrintDate(e.target.value)} placeholder="e.g. 12/04/2024" />
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  <label className="check">
+                    <input type="checkbox" checked={localShowHeader} onChange={e => setLocalShowHeader(e.target.checked)} />
+                    Show Branded Header
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={localShowWatermark} onChange={e => setLocalShowWatermark(e.target.checked)} />
+                    Show Watermark
+                  </label>
+                </div>
+              </div>
+
               <div className="actions" style={{ marginBottom: '14px' }}>
                 {viewingDoc.type === 'exam' && (
                   <button
