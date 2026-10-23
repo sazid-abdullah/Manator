@@ -1,0 +1,4 @@
+- Updated Firestore security rules for strict tenant isolation (`users/{userId}/{document=**}`).
+- Added a frontend check to prevent standard users from reading the global `upgrade_requests` collection (`firebase.ts`).
+- Created a mandatory `OnboardingModal` flow in `App.tsx` that blocks access to the dashboard until the user's `brandTitle` is set.
+- Ensured state hydration from Firestore completes (`isStateLoaded` flag in `StoreProvider`) before conditionally rendering the `OnboardingModal` in `App.tsx` to prevent returning users with slow connections from encountering it.

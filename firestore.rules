@@ -22,7 +22,8 @@ service cloud.firestore {
       allow write: if isOwner() || (request.auth != null && request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pendingRequest', 'updatedAt']));
     }
     match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId || isOwner();
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner();
     }
     match /{document=**} {
       allow read, write: if isOwner();

@@ -12,6 +12,8 @@ import { GoalDepositModal } from './components/GoalDepositModal';
 import { UploadPaperModal } from './components/UploadPaperModal';
 import { ImportDocModal } from './components/ImportDocModal';
 import { AuthModal } from './components/AuthModal';
+import { OnboardingModal } from './components/OnboardingModal';
+import { auth } from './services/firebase';
 
 import { HomeView } from './views/HomeView';
 import { StudentsView } from './views/StudentsView';
@@ -27,7 +29,7 @@ import { Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc } from './t
 import { fmtClock } from './utils/date';
 
 export const App: React.FC = () => {
-  const { state } = useStore();
+  const { state, isStateLoaded } = useStore();
 
   // Route state parsed from location.hash
   const [route, setRoute] = useState<string>('home');
@@ -95,10 +97,35 @@ export const App: React.FC = () => {
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    let unsubscribe = () => {};
+    if (auth) {
+      unsubscribe = auth.onAuthStateChanged((user) => {
+        setIsAuthenticated(!!user);
+      });
+    }
+    return () => unsubscribe();
+  }, []);
+
+  const requiresOnboarding = isStateLoaded && isAuthenticated && (!state.profile || !state.profile.brandTitle);
+
   // Check for running exams
   const runningExam = state.attempts.find(
     a => a.status === 'running' && a.endsAt > Date.now()
   );
+
+  if (requiresOnboarding) {
+    return (
+      <>
+        <Navbar currentRoute={route} onNavigate={navigate} onLoginClick={() => setAuthModalOpen(true)} />
+        <main id="view" tabIndex={-1}></main>
+        <OnboardingModal isOpen={true} />
+        <ToastContainer />
+      </>
+    );
+  }
 
   return (
     <>
