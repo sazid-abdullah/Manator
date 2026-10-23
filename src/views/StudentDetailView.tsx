@@ -5,6 +5,8 @@ import { scheduleSummary } from './StudentsView';
 import { studentBalance, contractStatus, cycleLabel, describeNextDue } from '../store/contracts';
 import { fmtDate, fmtTime, toISO, fmtN } from '../utils/date';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { ParentReportModal } from '../components/ParentReportModal';
+import { generateWhatsAppMessage } from '../utils/whatsapp';
 import { Student, Lesson, Contract, Payment } from '../types';
 
 interface StudentDetailViewProps {
@@ -31,6 +33,8 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
   const { state, getStudent, money, deleteStudent, deleteContract, saveContract, saveStudent, toast } = useStore();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [contractToDelete, setContractToDelete] = useState<string | null>(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [waLang, setWaLang] = useState<'en' | 'bn'>('en');
 
   const student = getStudent(studentId);
   if (!student) {
@@ -123,6 +127,9 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
           <button className="btn" onClick={() => onRecordPayment({ studentId: student.id })}>
             + Payment
           </button>
+          <button className="btn" onClick={() => setReportModalOpen(true)}>
+            Report / Receipt
+          </button>
           <button className="btn" onClick={() => onEditStudent(student)}>
             Edit
           </button>
@@ -140,33 +147,59 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
           </div>
           {bal > 0.005 && (
             <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {(student.guardianPhone || student.phone) && (
-                <a
-                  href={waLink(
-                    student.guardianPhone || student.phone,
-                    `Greetings! Tuition fee statement for ${student.name}:\n• Classes taught: ${taught}\n• Outstanding balance: ${money(bal)}\n• Tutor: ${state.settings.tutorName || 'Private Tutor'}\nThank you!`
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn xs"
-                  style={{ fontSize: '0.75rem', padding: '3px 8px', textDecoration: 'none' }}
-                >
-                  💬 WhatsApp Bill
-                </a>
-              )}
-              <button
-                type="button"
-                className="btn xs ghost"
-                style={{ fontSize: '0.75rem', padding: '3px 8px' }}
-                onClick={() => {
-                  navigator.clipboard.writeText(
-                    `Greetings! Tuition fee statement for ${student.name}:\n• Classes taught: ${taught}\n• Outstanding balance: ${money(bal)}\n• Tutor: ${state.settings.tutorName || 'Private Tutor'}\nThank you!`
-                  );
-                  toast('Bill text copied to clipboard', 'success');
-                }}
-              >
-                📋 Copy Bill
-              </button>
+              {(student.guardianPhone || student.phone) && (() => {
+                const activeC = contracts.find(c => c.status !== 'ended');
+                const cStatus = activeC ? contractStatus(activeC, state.lessons, state.payments) : null;
+                const lastClass = lessons.find(l => l.status === 'taught');
+                const msg = generateWhatsAppMessage({
+                  studentName: student.name,
+                  lang: waLang,
+                  completedClasses: cStatus?.taught !== undefined && activeC?.cycleType === 'classes' ? cStatus.taught - (cStatus.completed * activeC.cycleLength) : taught,
+                  targetClasses: activeC?.cycleLength || 'N/A',
+                  lastClassDate: lastClass ? fmtDate(lastClass.date) : undefined,
+                  lastClassTopic: lastClass?.subject || lastClass?.topics || undefined,
+                  dueAmount: String(bal),
+                  tutorName: state.settings.tutorName || 'Private Tutor',
+                  hasLastClass: !!lastClass
+                });
+
+                return (
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <a
+                      href={waLink(
+                        student.guardianPhone || student.phone,
+                        msg
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn xs"
+                      style={{ fontSize: '0.75rem', padding: '3px 8px', textDecoration: 'none' }}
+                    >
+                      💬 WhatsApp Bill
+                    </a>
+                    <select
+                      className="btn xs ghost"
+                      style={{ fontSize: '0.75rem', padding: '2px 6px', minWidth: '60px' }}
+                      value={waLang}
+                      onChange={e => setWaLang(e.target.value as 'en' | 'bn')}
+                    >
+                      <option value="en">EN</option>
+                      <option value="bn">বাংলা</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn xs ghost"
+                      style={{ fontSize: '0.75rem', padding: '3px 8px' }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(msg);
+                        toast('Bill text copied to clipboard', 'success');
+                      }}
+                    >
+                      📋 Copy Bill
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
