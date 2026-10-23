@@ -350,7 +350,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const logBatchLesson = useCallback((opts: {
     batchId: string;
-    batchSessionId?: string; // used for updating existing
     date: string;
     time?: string;
     duration?: number | null;

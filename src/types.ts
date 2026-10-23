@@ -198,12 +198,27 @@ export interface AIState {
   keys: Record<string, string>;
 }
 
+export interface TrxUpgradeRequest {
+  id: string;
+  uid: string;
+  userEmail: string;
+  userName?: string;
+  method: 'bkash' | 'nagad' | 'rocket';
+  senderPhone: string;
+  trxId: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  reviewedAt?: string;
+}
+
 export interface BillingState {
   plan: 'free' | 'pro';
   proUntil: number;
   credits: number;
   updatedAt: number;
   transactions: any[];
+  pendingRequest?: { method: string; trxId: string; senderPhone: string; createdAt: string; status: 'pending' | 'approved' | 'rejected' };
 }
 
 export interface AppState {

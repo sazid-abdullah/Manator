@@ -1,7 +1,8 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, Auth } from 'firebase/auth';
 import { getAnalytics, Analytics } from "firebase/analytics";
-import { getFirestore, Firestore } from "firebase/firestore";
+import { getFirestore, Firestore, doc, setDoc, updateDoc, collection, getDocs, getDoc, query, orderBy, writeBatch } from "firebase/firestore";
+import { TrxUpgradeRequest } from '../types';
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -29,5 +30,133 @@ try {
 } catch (e) {
   console.warn("Failed to initialize Firebase:", e);
 }
+
+export const submitTrxUpgradeRequest = async (uid: string, email: string, name: string | undefined, payload: { method: 'bkash' | 'nagad' | 'rocket'; senderPhone: string; trxId: string; amount: number }) => {
+  const reqId = `req_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  const request: TrxUpgradeRequest = {
+    id: reqId,
+    uid,
+    userEmail: email,
+    userName: name,
+    method: payload.method,
+    senderPhone: payload.senderPhone,
+    trxId: payload.trxId,
+    amount: payload.amount,
+    status: 'pending',
+    createdAt: now,
+  };
+
+  const pendingInfo = {
+    method: payload.method,
+    trxId: payload.trxId,
+    senderPhone: payload.senderPhone,
+    createdAt: now,
+    status: 'pending' as const,
+  };
+
+  if (!db) {
+    // Local fallback for offline/demo mode
+    localStorage.setItem(`upgrade_req_${uid}`, JSON.stringify(request));
+    localStorage.setItem(`pending_req_${uid}`, JSON.stringify(pendingInfo));
+    return request;
+  }
+
+  // Save to upgrade_requests collection
+  await setDoc(doc(db, 'upgrade_requests', reqId), request);
+
+  // Update billing state with pending request
+  const billingRef = doc(db, `users/${uid}/data/billing`);
+  const billingDoc = await getDoc(billingRef);
+
+  if (billingDoc.exists()) {
+    await updateDoc(billingRef, { pendingRequest: pendingInfo, updatedAt: Date.now() });
+  } else {
+    await setDoc(billingRef, { pendingRequest: pendingInfo, updatedAt: Date.now() }, { merge: true });
+  }
+
+  return request;
+};
+
+export const fetchPendingUpgradeRequests = async (): Promise<TrxUpgradeRequest[]> => {
+  if (!db) {
+    // Local fallback
+    const reqs: TrxUpgradeRequest[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('upgrade_req_')) {
+        reqs.push(JSON.parse(localStorage.getItem(key)!));
+      }
+    }
+    return reqs.filter(r => r.status === 'pending');
+  }
+
+  const q = query(collection(db, 'upgrade_requests'), orderBy('createdAt', 'desc'));
+  const snapshot = await getDocs(q);
+  return snapshot.docs
+    .map(doc => doc.data() as TrxUpgradeRequest)
+    .filter(req => req.status === 'pending');
+};
+
+export const reviewUpgradeRequest = async (requestId: string, targetUid: string, action: 'approved' | 'rejected') => {
+  const now = new Date().toISOString();
+
+  if (!db) {
+    // Local fallback
+    const reqKey = `upgrade_req_${targetUid}`;
+    const reqData = localStorage.getItem(reqKey);
+    if (reqData) {
+      const req = JSON.parse(reqData);
+      req.status = action;
+      req.reviewedAt = now;
+      localStorage.setItem(reqKey, JSON.stringify(req));
+    }
+    const pendingData = localStorage.getItem(`pending_req_${targetUid}`);
+    if (pendingData) {
+      const pending = JSON.parse(pendingData);
+      pending.status = action;
+      localStorage.setItem(`pending_req_${targetUid}`, JSON.stringify(pending));
+    }
+    return;
+  }
+
+  const batch = writeBatch(db);
+  const reqRef = doc(db, 'upgrade_requests', requestId);
+  const billingRef = doc(db, `users/${targetUid}/data/billing`);
+
+  // Update request status
+  batch.update(reqRef, {
+    status: action,
+    reviewedAt: now,
+  });
+
+  // Update user's billing state
+  const billingDoc = await getDoc(billingRef);
+  const currentData = billingDoc.exists() ? billingDoc.data() : {};
+  const updateData: any = {
+    updatedAt: Date.now(),
+  };
+
+  if (currentData.pendingRequest) {
+    updateData.pendingRequest = {
+      ...currentData.pendingRequest,
+      status: action,
+    };
+  }
+
+  if (action === 'approved') {
+    updateData.plan = 'pro';
+    updateData.credits = 999999;
+    updateData.proUntil = Date.now() + 30 * 86400e3; // 30 days
+    updateData.transactions = [
+      ...(currentData.transactions || []),
+      { id: requestId, amount: 99, date: now, type: 'subscription' }
+    ];
+  }
+
+  batch.set(billingRef, updateData, { merge: true });
+  await batch.commit();
+};
 
 export { auth, db, analytics, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged };
