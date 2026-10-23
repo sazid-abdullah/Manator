@@ -3,6 +3,9 @@ import { useStore } from '../store/context';
 import { AI_PROVIDERS, fetchModelList, callAI, autoModel, readModelCache } from '../services/ai';
 import { todayISO, fmtDate } from '../utils/date';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { auth, submitTrxUpgradeRequest, fetchPendingUpgradeRequests, reviewUpgradeRequest } from '../services/firebase';
+import { isOwnerEmail } from '../utils/auth';
+import { TrxUpgradeRequest } from '../types';
 
 const CURRENCIES = ['৳', '₹', 'Rs ', '$', '£', '€', 'RM ', 'SAR '];
 
@@ -34,6 +37,14 @@ export const SettingsView: React.FC = () => {
   const [modelsLoadedMsg, setModelsLoadedMsg] = useState('');
   const apiKeyTimeout = useRef<number | null>(null);
 
+  const [upgradeMethod, setUpgradeMethod] = useState<'bkash' | 'nagad' | 'rocket'>('bkash');
+  const [senderPhone, setSenderPhone] = useState('');
+  const [trxId, setTrxId] = useState('');
+  const [isSubmittingUpgrade, setIsSubmittingUpgrade] = useState(false);
+
+  const [adminRequests, setAdminRequests] = useState<TrxUpgradeRequest[]>([]);
+  const isOwner = auth?.currentUser?.email ? isOwnerEmail(auth.currentUser.email) : false;
+
   const pConfig = AI_PROVIDERS[provider];
 
   useEffect(() => {
@@ -54,6 +65,14 @@ export const SettingsView: React.FC = () => {
     }, 1000);
     return () => { if (apiKeyTimeout.current) window.clearTimeout(apiKeyTimeout.current); };
   }, [apiKey]);
+
+  useEffect(() => {
+    if (isOwner) {
+      fetchPendingUpgradeRequests().then(reqs => setAdminRequests(reqs)).catch(err => {
+        console.error("Failed to load admin requests:", err);
+      });
+    }
+  }, [isOwner]);
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,6 +179,45 @@ export const SettingsView: React.FC = () => {
     e.target.value = '';
   };
 
+  const handleUpgradeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth?.currentUser) {
+      toast('Please log in first to upgrade', 'error');
+      return;
+    }
+
+    const phone = senderPhone.trim();
+    if (!/^01[3-9]\d{8}$/.test(phone)) {
+      toast('Please enter a valid 11-digit BD phone number', 'error');
+      return;
+    }
+
+    const tid = trxId.trim().toUpperCase();
+    if (tid.length < 6) {
+      toast('Please enter a valid Transaction ID', 'error');
+      return;
+    }
+
+    setIsSubmittingUpgrade(true);
+    try {
+      await submitTrxUpgradeRequest(auth.currentUser.uid, auth.currentUser.email!, auth.currentUser.displayName || undefined, { method: upgradeMethod, senderPhone: phone, trxId: tid, amount: 99 });
+      toast('Upgrade request submitted successfully! Waiting for verification.', 'success');
+    } catch (err) {
+      toast('Failed to submit request', 'error');
+    }
+    setIsSubmittingUpgrade(false);
+  };
+
+  const handleReviewRequest = async (id: string, uid: string, action: 'approved' | 'rejected') => {
+    try {
+      await reviewUpgradeRequest(id, uid, action);
+      setAdminRequests(prev => prev.filter(r => r.id !== id));
+      toast(`Request ${action}`, 'success');
+    } catch (err) {
+      toast('Failed to update request', 'error');
+    }
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -170,6 +228,44 @@ export const SettingsView: React.FC = () => {
       </div>
 
       <div className="grid">
+        {/* Admin Dashboard */}
+        {isOwner && (
+          <div className="card" style={{ gridColumn: '1 / -1', border: '2px solid var(--accent)' }}>
+            <h2 style={{ color: 'var(--accent)' }}>👑 Owner Admin — TrxID Approvals</h2>
+            {adminRequests.length === 0 ? (
+              <p className="muted small">No pending upgrade requests.</p>
+            ) : (
+              <table className="table" style={{ marginTop: '8px' }}>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Method</th>
+                    <th>Phone</th>
+                    <th>TrxID</th>
+                    <th>Date</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminRequests.map(req => (
+                    <tr key={req.id}>
+                      <td>{req.userEmail}</td>
+                      <td>{req.method}</td>
+                      <td>{req.senderPhone}</td>
+                      <td>{req.trxId}</td>
+                      <td>{fmtDate(req.createdAt.split('T')[0])}</td>
+                      <td>
+                        <button className="btn primary small" onClick={() => handleReviewRequest(req.id, req.uid, 'approved')} style={{ marginRight: '4px' }}>Approve</button>
+                        <button className="btn danger small" onClick={() => handleReviewRequest(req.id, req.uid, 'rejected')}>Reject</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
         {/* Billing Card */}
         <div className="card">
           <h2>Account & Billing</h2>
@@ -181,6 +277,45 @@ export const SettingsView: React.FC = () => {
               )}
               {billingState.plan === 'free' && (
                 <p>AI Credits: <strong>{billingState.credits}</strong></p>
+              )}
+
+              {billingState.pendingRequest && billingState.pendingRequest.status === 'pending' && (
+                <div style={{ marginTop: '12px', padding: '12px', background: 'var(--card2)', borderRadius: '8px', borderLeft: '4px solid var(--accent)' }}>
+                  <strong>⏳ Verification Pending</strong>
+                  <p className="small muted" style={{ marginTop: '4px' }}>We are verifying your TrxID ({billingState.pendingRequest.trxId}). Pro access will be granted shortly.</p>
+                </div>
+              )}
+
+              {billingState.plan === 'free' && (!billingState.pendingRequest || billingState.pendingRequest.status !== 'pending') && (
+                <div style={{ marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                  <h3 style={{ fontSize: '1.1rem', marginBottom: '8px' }}>Upgrade via bKash / Nagad (৳99/mo)</h3>
+                  <p className="small muted" style={{ marginBottom: '12px' }}>
+                    Send ৳99 via Send Money to <b>017XXXXXXX</b>, then enter your TrxID below to get Pro features.
+                  </p>
+                  <form className="form" onSubmit={handleUpgradeSubmit}>
+                    <div className="form-row">
+                      <label className="field">
+                        Method
+                        <select value={upgradeMethod} onChange={e => setUpgradeMethod(e.target.value as any)}>
+                          <option value="bkash">bKash</option>
+                          <option value="nagad">Nagad</option>
+                          <option value="rocket">Rocket</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        Sender Phone
+                        <input placeholder="017..." value={senderPhone} onChange={e => setSenderPhone(e.target.value)} required />
+                      </label>
+                    </div>
+                    <label className="field" style={{ marginTop: '8px' }}>
+                      Transaction ID (TrxID)
+                      <input placeholder="e.g. BJM82K9L0P" value={trxId} onChange={e => setTrxId(e.target.value.toUpperCase())} required />
+                    </label>
+                    <button type="submit" className="btn primary" disabled={isSubmittingUpgrade} style={{ marginTop: '12px', width: '100%' }}>
+                      {isSubmittingUpgrade ? 'Submitting...' : 'Submit TrxID'}
+                    </button>
+                  </form>
+                </div>
               )}
 
               {billingState.transactions && billingState.transactions.length > 0 && (
