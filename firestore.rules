@@ -6,9 +6,14 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.email.lower() == 'abdullahsazid109@gmail.com';
     }
 
+    match /app_config/{docId} {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+
     match /upgrade_requests/{docId} {
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.uid;
+      allow read: if request.auth != null && (request.auth.uid == docId || request.auth.uid == resource.data.uid);
       allow read, write: if isOwner();
     }
 
