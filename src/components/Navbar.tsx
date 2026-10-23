@@ -10,7 +10,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLoginClick }) => {
-  const { billingState } = useStore();
+  const { billingState, syncStatus, lastSyncedAt } = useStore();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -201,24 +201,42 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
           </button>
         )}
 
-        {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
-            {billingState ? (
-              <span className={`badge ${billingState.plan === 'pro' ? 'green' : 'blue'}`}>
-                {billingState.plan === 'pro' ? 'Pro' : `${billingState.credits} credits`}
-              </span>
-            ) : (
-              <span className="badge blue">Free (BYOK)</span>
-            )}
-            <span style={{ color: 'var(--muted)' }} className="hide-mobile">{user.email}</span>
-            <button onClick={() => auth && signOut(auth)} className="btn xs">Logout</button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="badge blue hide-mobile">Free (BYOK)</span>
-            <button onClick={onLoginClick} className="btn xs primary">Login</button>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+          {syncStatus === 'synced' && (
+            <span className="badge green hide-mobile" title={lastSyncedAt ? `Last synced: ${new Date(lastSyncedAt).toLocaleTimeString()}` : 'Synced to cloud'}>☁️ Synced</span>
+          )}
+          {syncStatus === 'syncing' && (
+            <span className="badge blue hide-mobile" style={{ animation: 'pulse 1.5s infinite' }} title="Syncing changes to cloud...">🔄 Syncing...</span>
+          )}
+          {syncStatus === 'offline' && (
+            <span className="badge yellow hide-mobile" title="You are offline. Changes saved locally.">⚡ Offline (Saved Locally)</span>
+          )}
+          {syncStatus === 'local' && (
+            <span className="badge hide-mobile" style={{ background: 'var(--surface-2)' }} title="Changes saved to local storage">⚡ Saved Locally</span>
+          )}
+          {syncStatus === 'error' && (
+            <span className="badge red hide-mobile" title="Error syncing to cloud">⚠️ Sync Error</span>
+          )}
+
+          {user ? (
+            <>
+              {billingState ? (
+                <span className={`badge ${billingState.plan === 'pro' ? 'green' : 'blue'}`}>
+                  {billingState.plan === 'pro' ? 'Pro' : `${billingState.credits} credits`}
+                </span>
+              ) : (
+                <span className="badge blue hide-mobile">Free (BYOK)</span>
+              )}
+              <span style={{ color: 'var(--muted)' }} className="hide-mobile">{user.email}</span>
+              <button onClick={() => auth && signOut(auth)} className="btn xs">Logout</button>
+            </>
+          ) : (
+            <>
+              <span className="badge blue hide-mobile">Free (BYOK)</span>
+              <button onClick={onLoginClick} className="btn xs primary">Login</button>
+            </>
+          )}
+        </div>
       </div>
 
       <nav id="nav" aria-label="Main">

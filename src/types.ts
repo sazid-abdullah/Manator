@@ -259,3 +259,5 @@ export interface ToastMessage {
   type?: 'info' | 'error' | 'success';
   action?: { label: string; fn: () => void };
 }
+
+export type SyncStatus = 'local' | 'syncing' | 'synced' | 'offline' | 'error';

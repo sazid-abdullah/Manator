@@ -1,5 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as firebaseMod from '../services/firebase';
 import { submitTrxUpgradeRequest, fetchPendingUpgradeRequests, reviewUpgradeRequest } from '../services/firebase';
+
+vi.mock('firebase/firestore', () => ({
+  getFirestore: vi.fn(() => null),
+  doc: vi.fn(),
+  setDoc: vi.fn(),
+  updateDoc: vi.fn(),
+  collection: vi.fn(),
+  getDocs: vi.fn(),
+  getDoc: vi.fn(),
+  query: vi.fn(),
+  orderBy: vi.fn(),
+  writeBatch: vi.fn(),
+}));
+
+// We force `db` to be null inside the tests so we use the local offline mock paths
+// We also mock auth just in case.
+vi.mock('../services/firebase', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../services/firebase')>();
+  return {
+    ...mod,
+    db: null,
+  };
+});
 
 // Mock localStorage for local fallback testing
 const localStorageMock = (() => {
