@@ -1,5 +1,5 @@
 // Network-first service worker for Tuitrix PWA
-const CACHE_NAME = 'tuitrix-v20';
+const CACHE_NAME = 'tuitrix-v21';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

@@ -21,6 +21,7 @@ vi.mock('../services/ai', async (importOriginal) => {
 describe('Print Branding & Header Tests', () => {
   let mockState: any;
   let mockUpdateSettings: any;
+  let mockUpdateProfile: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -28,6 +29,8 @@ describe('Print Branding & Header Tests', () => {
       settings: {
         tutorName: 'John Doe',
         currency: '৳',
+      },
+      profile: {
         credentials: 'B.Sc.',
         brandTitle: 'Johns Academy',
         showPrintHeader: true,
@@ -42,10 +45,12 @@ describe('Print Branding & Header Tests', () => {
       contracts: [],
     };
     mockUpdateSettings = vi.fn();
+    mockUpdateProfile = vi.fn();
 
     vi.spyOn(context, 'useStore').mockReturnValue({
       state: mockState,
       updateSettings: mockUpdateSettings,
+      updateProfile: mockUpdateProfile,
       toast: vi.fn(),
       saveDoc: vi.fn(),
     } as any);
@@ -70,7 +75,7 @@ describe('Print Branding & Header Tests', () => {
     fireEvent.change(screen.getByPlaceholderText(/e.g. Sazid's/i), { target: { value: 'New Academy' } });
     fireEvent.click(screen.getByText('Save profile'));
 
-    expect(mockUpdateSettings).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockUpdateProfile).toHaveBeenCalledWith(expect.objectContaining({
       brandTitle: 'New Academy',
     }));
   });

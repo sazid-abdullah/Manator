@@ -108,8 +108,8 @@ export const AIView: React.FC<AIViewProps> = ({
   const [printMarks, setPrintMarks] = useState('');
   const [printTime, setPrintTime] = useState('');
   const [printDate, setPrintDate] = useState('');
-  const [localShowHeader, setLocalShowHeader] = useState(state.settings.showPrintHeader ?? true);
-  const [localShowWatermark, setLocalShowWatermark] = useState(state.settings.showPrintWatermark ?? true);
+  const [localShowHeader, setLocalShowHeader] = useState(state.profile?.showPrintHeader ?? true);
+  const [localShowWatermark, setLocalShowWatermark] = useState(state.profile?.showPrintWatermark ?? true);
 
   // Prefill student details if student changes
   useEffect(() => {
@@ -299,8 +299,8 @@ export const AIView: React.FC<AIViewProps> = ({
     let footerHtml = '';
 
     const tutorNameStr = state.settings.tutorName || '';
-    const brandTitleStr = state.settings.brandTitle || 'EXAM / LECTURE SHEET';
-    const credentialsStr = state.settings.credentials || '';
+    const brandTitleStr = state.profile?.brandTitle || 'EXAM / LECTURE SHEET';
+    const credentialsStr = state.profile?.credentials || '';
 
     if (localShowHeader) {
       const parts = [tutorNameStr, credentialsStr].filter(Boolean);
@@ -323,7 +323,7 @@ export const AIView: React.FC<AIViewProps> = ({
     }
 
     if (localShowWatermark) {
-      const wmText = state.settings.brandTitle || state.settings.tutorName || 'Tuitrix';
+      const wmText = state.profile?.brandTitle || state.settings.tutorName || 'Tuitrix';
       watermarkHtml = `<div class="watermark">${wmText}</div>`;
       footerHtml = `<div class="print-footer">Prepared by ${tutorNameStr || 'Tutor'} &bull; Powered by Tuitrix</div>`;
     }

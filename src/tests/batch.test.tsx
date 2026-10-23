@@ -25,8 +25,11 @@ describe('Batch and Group Tuition Operations', () => {
     localStorage.clear();
   });
 
-  it('creates and retrieves a batch', () => {
-    const { result } = renderHook(() => useStore(), { wrapper });
+  it('creates and retrieves a batch', async () => {
+    let result: any;
+    await act(async () => {
+      result = renderHook(() => useStore(), { wrapper }).result;
+    });
 
     act(() => {
       const student1Id = result.current.saveStudent({ name: 'Alice', active: true });
@@ -46,8 +49,11 @@ describe('Batch and Group Tuition Operations', () => {
     expect(batches?.[0].studentIds.length).toBe(2);
   });
 
-  it('logs a batch lesson and fans out individual lessons', () => {
-    const { result } = renderHook(() => useStore(), { wrapper });
+  it('logs a batch lesson and fans out individual lessons', async () => {
+    let result: any;
+    await act(async () => {
+      result = renderHook(() => useStore(), { wrapper }).result;
+    });
 
     let student1Id = '';
     let student2Id = '';
@@ -97,6 +103,37 @@ describe('Batch and Group Tuition Operations', () => {
     expect(lesson1?.batchSessionId).toBe(lesson2?.batchSessionId); // Shared session ID
   });
 
+  it('handles batch payment fan-out logging', async () => {
+    let result: any;
+    await act(async () => {
+      result = renderHook(() => useStore(), { wrapper }).result;
+    });
+
+    let student1Id = '';
+    let student2Id = '';
+
+    act(() => {
+      student1Id = result.current.saveStudent({ name: 'Alice', active: true });
+      student2Id = result.current.saveStudent({ name: 'Bob', active: true });
+    });
+
+    act(() => {
+      result.current.savePayment({ studentId: student1Id, amount: 1000, date: '2025-01-01' });
+      result.current.savePayment({ studentId: student2Id, amount: 1500, date: '2025-01-01', discountApplied: 50, promoCodeUsed: 'TEST50' });
+    });
+
+    const payments = result.current.state.payments;
+    expect(payments.length).toBe(2);
+
+    const p1 = payments.find(p => p.studentId === student1Id);
+    expect(p1?.amount).toBe(1000);
+
+    const p2 = payments.find(p => p.studentId === student2Id);
+    expect(p2?.amount).toBe(1500);
+    expect(p2?.discountApplied).toBe(50);
+    expect(p2?.promoCodeUsed).toBe('TEST50');
+  });
+
   it('handles missing batches gracefully during state load (backward compatibility)', () => {
      // Re-initialize a fresh local storage specifically for this test
      // because renderHook uses singleton-like context provider in test env if not unmounted
@@ -127,14 +164,16 @@ describe('Batch and Group Tuition Operations', () => {
      const mockLoadState = () => {
          try {
            const raw = localStorage.getItem('tuitrix_data');
-           if (!raw) return { batches: [] };
+           if (!raw) return { batches: [], profile: {} };
            const parsed = JSON.parse(raw);
+           const defaultProfile = { credentials: '', brandTitle: '', showPrintHeader: true, showPrintWatermark: true };
            return {
              ...parsed,
              batches: Array.isArray(parsed.batches) ? parsed.batches : [],
+             profile: { ...defaultProfile, ...(parsed.profile || {}) },
            };
          } catch (e) {
-           return { batches: [] };
+           return { batches: [], profile: {} };
          }
      }
 
@@ -145,5 +184,8 @@ describe('Batch and Group Tuition Operations', () => {
      expect(loadedState.batches).toBeDefined();
      expect(Array.isArray(loadedState.batches)).toBe(true);
      expect(loadedState.batches?.length).toBe(0);
+
+     expect(loadedState.profile).toBeDefined();
+     expect(loadedState.profile?.showPrintHeader).toBe(true);
   });
 });
