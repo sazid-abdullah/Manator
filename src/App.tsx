@@ -47,6 +47,25 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     parseHash();
+
+    // Handle URL query parameters for PWA shortcut deep-linking
+    const query = new URLSearchParams(window.location.search);
+    const view = query.get('view');
+    const action = query.get('action');
+
+    if (view) {
+      // Need a small timeout to let react mount if this triggers route state changes
+      setTimeout(() => navigate(view), 0);
+      window.history.replaceState(null, '', window.location.pathname);
+    } else if (action === 'log-class') {
+      setTimeout(() => {
+        setLessonOpts({});
+        setSelectedLesson(null);
+        setLessonModalOpen(true);
+      }, 0);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+
     window.addEventListener('hashchange', parseHash);
     return () => window.removeEventListener('hashchange', parseHash);
   }, []);

@@ -215,4 +215,4 @@ export const resetUserPassword = async (email: string): Promise<void> => {
   return sendPasswordResetEmail(auth, email.trim());
 };
 
-export { auth, db, analytics, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail };
+export { app, auth, db, analytics, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail };
