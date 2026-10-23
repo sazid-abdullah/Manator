@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, Auth } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, Auth } from 'firebase/auth';
 import { getAnalytics, Analytics } from "firebase/analytics";
 import { getFirestore, Firestore, doc, setDoc, updateDoc, collection, getDocs, getDoc, query, orderBy, writeBatch } from "firebase/firestore";
 import { TrxUpgradeRequest, PricingConfig } from '../types';
@@ -64,8 +64,11 @@ export const submitTrxUpgradeRequest = async (uid: string, email: string, name: 
     return request;
   }
 
+  // Clean undefined values before saving to Firestore
+  const cleanRequest = Object.fromEntries(Object.entries(request).filter(([_, v]) => v !== undefined));
+
   // Save to upgrade_requests collection
-  await setDoc(doc(db, 'upgrade_requests', reqId), request);
+  await setDoc(doc(db, 'upgrade_requests', reqId), cleanRequest);
 
   // Update billing state with pending request
   const billingRef = doc(db, `users/${uid}/data/billing`);
@@ -198,4 +201,12 @@ export const updatePricingConfig = async (config: PricingConfig): Promise<void> 
   await setDoc(doc(db, 'app_config', 'pricing'), data);
 };
 
-export { auth, db, analytics, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged };
+export const resetUserPassword = async (email: string): Promise<void> => {
+  if (!auth) {
+    console.warn("Offline mode: Firebase Auth is not initialized. Mocking password reset.");
+    return Promise.resolve();
+  }
+  return sendPasswordResetEmail(auth, email.trim());
+};
+
+export { auth, db, analytics, googleProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail };

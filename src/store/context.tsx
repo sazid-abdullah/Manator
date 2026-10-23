@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AppState, BillingState, Student, Batch, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage } from '../types';
+import { AppState, BillingState, Student, Batch, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage, SyncStatus } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
 import { isOwnerEmail } from '../utils/auth';
 import { auth, db, onAuthStateChanged } from '../services/firebase';
@@ -48,6 +48,8 @@ interface StoreContextType {
   state: AppState;
   billingState: BillingState | null;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  syncStatus: SyncStatus;
+  lastSyncedAt?: string;
   toasts: ToastMessage[];
   toast: (msg: string, type?: 'info' | 'error' | 'success', action?: { label: string; fn: () => void }) => void;
   dismissToast: (id: string) => void;
@@ -102,6 +104,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [state, setState] = useState<AppState>(loadState);
   const [billingState, setBillingState] = useState<BillingState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('local');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | undefined>();
   const isMigratingRef = useRef(false);
   const authLoadedRef = useRef(false);
 
@@ -192,9 +196,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
     }
 
+    const handleOnline = () => {
+      if (auth?.currentUser) {
+        setSyncStatus('syncing'); // or let next sync push set it
+      } else {
+        setSyncStatus('local');
+      }
+    };
+    const handleOffline = () => setSyncStatus('offline');
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+    }
+
     return () => {
       unsubscribe();
       if (unsubscribeBilling) unsubscribeBilling();
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []); // state shouldn't be here since we upload dataToUpload
 
@@ -202,16 +224,36 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+
+      if (!navigator.onLine) {
+        setSyncStatus('offline');
+        return;
+      }
+
       // Write to firestore if logged in and not currently migrating
       const user = auth?.currentUser;
       if (user && authLoadedRef.current && !isMigratingRef.current) {
         if (db) {
+          setSyncStatus('syncing');
           const docRef = doc(db, `users/${user.uid}/data/appState`);
-          setDoc(docRef, state).catch(e => console.error('Failed to save to Firestore', e));
+          setDoc(docRef, state)
+            .then(() => {
+              setSyncStatus('synced');
+              setLastSyncedAt(new Date().toISOString());
+            })
+            .catch(e => {
+              console.error('Failed to save to Firestore', e);
+              setSyncStatus('error');
+            });
         }
+      } else if (!user) {
+        setSyncStatus('local');
       }
     } catch (e) {
       console.error('Failed to save state', e);
+      if (navigator.onLine && auth?.currentUser) {
+        setSyncStatus('error');
+      }
     }
   }, [state]);
 
@@ -661,6 +703,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       state,
       billingState,
       setState,
+      syncStatus,
+      lastSyncedAt,
       toasts,
       toast,
       dismissToast,
