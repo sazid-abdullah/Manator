@@ -101,12 +101,14 @@ interface StoreContextType {
   exportBackup: (includeKeys?: boolean) => string;
   importBackup: (text: string) => void;
   downloadFile: (name: string, content: string, type?: string) => void;
+  isStateLoaded: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(loadState);
+  const [isStateLoaded, setIsStateLoaded] = useState(false);
   const [billingState, setBillingState] = useState<BillingState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('local');
@@ -142,7 +144,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         authLoadedRef.current = true;
         try {
-          if (!db) return;
+          if (!db) {
+            setIsStateLoaded(true);
+            return;
+          }
           const docRef = doc(db, `users/${user.uid}/data/appState`);
           const docSnap = await getDoc(docRef);
 
@@ -162,6 +167,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                await setDoc(docRef, remoteState);
             }
             setState(remoteState);
+            setIsStateLoaded(true);
             localStorage.setItem(STORE_KEY, JSON.stringify(remoteState));
           } else {
             // Document doesn't exist, check if local state needs migrating
@@ -188,9 +194,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                await setDoc(docRef, dataToUpload);
                setState(dataToUpload);
             }
+            setIsStateLoaded(true);
           }
         } catch (error) {
           console.error("Error syncing with Firestore:", error);
+          setIsStateLoaded(true);
         }
       } else {
         // user logged out or guest mode
@@ -206,8 +214,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setBillingState(null);
         if (unsubscribeBilling) unsubscribeBilling();
         authLoadedRef.current = false;
+        setIsStateLoaded(true);
       }
     });
+    } else {
+      setIsStateLoaded(true);
     }
 
     const handleOnline = () => {
@@ -761,6 +772,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       exportBackup,
       importBackup,
       downloadFile,
+      isStateLoaded,
     }}>
       {children}
     </StoreContext.Provider>

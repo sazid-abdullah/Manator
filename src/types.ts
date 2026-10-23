@@ -198,6 +198,7 @@ export interface AppSettings {
 export interface TutorProfile {
   credentials?: string;
   brandTitle?: string;
+  primarySubject?: string;
   showPrintHeader?: boolean;
   showPrintWatermark?: boolean;
 }

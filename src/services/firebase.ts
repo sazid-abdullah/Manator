@@ -96,6 +96,12 @@ export const fetchPendingUpgradeRequests = async (): Promise<TrxUpgradeRequest[]
     return reqs.filter(r => r.status === 'pending');
   }
 
+  if (!auth?.currentUser) return [];
+
+  if (auth.currentUser.email !== 'abdullahsazid109@gmail.com') {
+    return [];
+  }
+
   const q = query(collection(db, 'upgrade_requests'), orderBy('createdAt', 'desc'));
   const snapshot = await getDocs(q);
   return snapshot.docs
