@@ -25,6 +25,18 @@ export interface Batch {
   createdAt?: string;
 }
 
+export interface ExamScore {
+  id: string;
+  studentId: string;
+  batchId?: string;
+  title: string;        // e.g., "Chapter 4 Quiz", "Monthly Model Test"
+  subject: string;
+  date: string;         // YYYY-MM-DD
+  obtainedMarks: number;
+  totalMarks: number;
+  remarks?: string;
+}
+
 export interface Student {
   id: string;
   name: string;
@@ -40,6 +52,7 @@ export interface Student {
   active?: boolean;
   createdAt?: string;
   batchId?: string | null;
+  examScores?: ExamScore[];
 }
 
 export interface Contract {
@@ -115,6 +128,18 @@ export interface SavedDoc {
   studentId?: string | null;
   meta?: Record<string, any>;
   createdAt: string;
+}
+
+export interface SavedAiResource {
+  id: string;
+  title: string;
+  type: 'exam' | 'notes' | 'worksheet' | string;
+  classLevel: string;
+  subject: string;
+  topic: string;
+  content: string;
+  createdAt: string;    // ISO date
+  isFavorite?: boolean;
 }
 
 export interface MCQQuestion {
@@ -251,6 +276,7 @@ export interface AppState {
   payments: Payment[];
   expenses: Expense[];
   docs: SavedDoc[];
+  savedResources: SavedAiResource[];
   goals: Goal[];
   exams: Exam[];
   attempts: Attempt[];

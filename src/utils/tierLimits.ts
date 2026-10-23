@@ -44,3 +44,5 @@ export const getDailyAiQuotaState = (usage: DailyAiAdUsage | undefined, todayStr
     canWatchAd
   };
 };
+export const FREE_TIER_MAX_SAVED_RESOURCES = 5;
+export const canSaveAiResource = (currentCount: number, isPro: boolean): boolean => { return isPro || currentCount < FREE_TIER_MAX_SAVED_RESOURCES; };

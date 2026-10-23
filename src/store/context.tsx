@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AppState, BillingState, Student, Batch, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage, SyncStatus } from '../types';
+import { AppState, BillingState, Student, Batch, Contract, Lesson, Payment, Expense, Goal, SavedDoc, Exam, Attempt, ToastMessage, SyncStatus, ExamScore, SavedAiResource } from '../types';
 import { todayISO, addDays, addMonths, parseISO, uid } from '../utils/date';
 import { isOwnerEmail } from '../utils/auth';
 import { auth, db, onAuthStateChanged } from '../services/firebase';
@@ -21,6 +21,7 @@ function defaultState(): AppState {
     payments: [],
     expenses: [],
     docs: [],
+    savedResources: [],
     goals: [],
     exams: [],
     attempts: [],
@@ -40,6 +41,7 @@ function loadState(): AppState {
       profile: { ...defaultState().profile, ...(parsed.profile || {}) },
       ai: { ...defaultState().ai, ...(parsed.ai || {}) },
       batches: Array.isArray(parsed.batches) ? parsed.batches : [],
+      savedResources: Array.isArray(parsed.savedResources) ? parsed.savedResources : [],
       promoCodes: Array.isArray(parsed.promoCodes) ? parsed.promoCodes : [],
     };
   } catch (e) {
@@ -90,6 +92,11 @@ interface StoreContextType {
   depositGoal: (id: string, amount: number) => void;
   saveDoc: (doc: Omit<SavedDoc, 'id'> & { id?: string }) => string;
   deleteDoc: (id: string) => void;
+  addExamScore: (studentId: string, score: Omit<ExamScore, 'id'> & { id?: string }) => string;
+  deleteExamScore: (studentId: string, scoreId: string) => void;
+  saveAiResource: (resource: Omit<SavedAiResource, 'id'> & { id?: string }) => string;
+  deleteAiResource: (id: string) => void;
+  toggleFavoriteAiResource: (id: string) => void;
   saveExam: (exam: Omit<Exam, 'id'> & { id?: string }) => string;
   saveAttempt: (attempt: Attempt) => void;
   deleteAttempt: (id: string) => void;
@@ -573,6 +580,57 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setState(prev => ({ ...prev, docs: prev.docs.filter(d => d.id !== id) }));
   }, []);
 
+  const addExamScore = useCallback((studentId: string, score: Omit<ExamScore, 'id'> & { id?: string }) => {
+    const finalScore = { ...score, id: score.id || uid(), studentId } as ExamScore;
+    setState(s => {
+      const student = s.students.find(st => st.id === studentId);
+      if (!student) return s;
+      const currentScores = student.examScores || [];
+      const updatedScores = score.id
+        ? currentScores.map(sc => sc.id === score.id ? finalScore : sc)
+        : [...currentScores, finalScore];
+
+      return {
+        ...s,
+        students: s.students.map(st => st.id === studentId ? { ...st, examScores: updatedScores } : st)
+      };
+    });
+    return finalScore.id;
+  }, []);
+
+  const deleteExamScore = useCallback((studentId: string, scoreId: string) => {
+    setState(s => {
+      const student = s.students.find(st => st.id === studentId);
+      if (!student) return s;
+      const currentScores = student.examScores || [];
+      return {
+        ...s,
+        students: s.students.map(st => st.id === studentId ? { ...st, examScores: currentScores.filter(sc => sc.id !== scoreId) } : st)
+      };
+    });
+  }, []);
+
+  const saveAiResource = useCallback((resource: Omit<SavedAiResource, 'id'> & { id?: string }) => {
+    const isNew = !resource.id;
+    const finalRes = { ...resource, id: resource.id || uid() } as SavedAiResource;
+    setState(s => ({
+      ...s,
+      savedResources: isNew ? [finalRes, ...(s.savedResources || [])] : (s.savedResources || []).map(r => (r.id === finalRes.id ? finalRes : r)),
+    }));
+    return finalRes.id;
+  }, []);
+
+  const deleteAiResource = useCallback((id: string) => {
+    setState(s => ({ ...s, savedResources: (s.savedResources || []).filter(r => r.id !== id) }));
+  }, []);
+
+  const toggleFavoriteAiResource = useCallback((id: string) => {
+    setState(s => ({
+      ...s,
+      savedResources: (s.savedResources || []).map(r => r.id === id ? { ...r, isFavorite: !r.isFavorite } : r)
+    }));
+  }, []);
+
   const saveExam = useCallback((exam: Omit<Exam, 'id'> & { id?: string }) => {
     const id = exam.id || uid();
     setState(prev => {
@@ -761,6 +819,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       depositGoal,
       saveDoc,
       deleteDoc,
+        addExamScore,
+        deleteExamScore,
+        saveAiResource,
+        deleteAiResource,
+        toggleFavoriteAiResource,
       saveExam,
       saveAttempt,
       deleteAttempt,
