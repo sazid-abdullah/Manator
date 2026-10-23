@@ -201,6 +201,9 @@ export interface TutorProfile {
   primarySubject?: string;
   showPrintHeader?: boolean;
   showPrintWatermark?: boolean;
+  notificationsEnabled?: boolean;
+  feeReminderNotifications?: boolean;
+  classReminderNotifications?: boolean;
 }
 
 export interface AIState {

@@ -11,6 +11,7 @@ import * as context from '../store/context';
 import * as aiServices from '../services/ai';
 
 vi.mock('../services/firebase', () => ({
+  app: {},
   auth: {},
   db: {},
   onAuthStateChanged: vi.fn(),

@@ -6,6 +6,7 @@ import { ConfirmModal } from '../components/ConfirmModal';
 import { auth, submitTrxUpgradeRequest, fetchPendingUpgradeRequests, reviewUpgradeRequest, fetchPricingConfig, updatePricingConfig } from '../services/firebase';
 import { isOwnerEmail } from '../utils/auth';
 import { TrxUpgradeRequest, PricingConfig } from '../types';
+import { requestNotificationPermission, sendLocalReminderNotification, getDueRemindersSummary } from '../services/notifications';
 
 const CURRENCIES = ['৳', '₹', 'Rs ', '$', '£', '€', 'RM ', 'SAR '];
 
@@ -30,6 +31,20 @@ export const SettingsView: React.FC = () => {
   const [showPrintHeader, setShowPrintHeader] = useState(state.profile?.showPrintHeader ?? true);
   const [showPrintWatermark, setShowPrintWatermark] = useState(state.profile?.showPrintWatermark ?? true);
   const [currency, setCurrency] = useState(state.settings.currency || '৳');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(state.profile?.notificationsEnabled ?? false);
+  const [feeReminderNotifications, setFeeReminderNotifications] = useState(state.profile?.feeReminderNotifications ?? true);
+  const [classReminderNotifications, setClassReminderNotifications] = useState(state.profile?.classReminderNotifications ?? true);
+  const [pushStatus, setPushStatus] = useState<string>('Not Enabled');
+
+  useEffect(() => {
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        setPushStatus('Enabled');
+      } else if (Notification.permission === 'denied') {
+        setPushStatus('Blocked');
+      }
+    }
+  }, []);
   const [provider, setProvider] = useState(state.ai.provider);
   const [apiKey, setApiKey] = useState(state.ai.keys[provider] || '');
   const [selectedModel, setSelectedModel] = useState(state.ai.models[provider] || '');
@@ -111,8 +126,46 @@ export const SettingsView: React.FC = () => {
       brandTitle: brandTitle.trim(),
       showPrintHeader,
       showPrintWatermark,
+      notificationsEnabled,
+      feeReminderNotifications,
+      classReminderNotifications,
     });
     toast('Profile saved', 'success');
+  };
+
+  const handleEnablePushNotifications = async () => {
+    try {
+      const permission = await requestNotificationPermission();
+      if (permission === 'granted') {
+        setPushStatus('Enabled');
+        setNotificationsEnabled(true);
+        updateProfile({ notificationsEnabled: true });
+
+        if (auth?.currentUser) {
+          // If using FCM in a full setup, this would save the token.
+          // Even without FCM, local SW notifications will work.
+          // await registerFcmToken(auth.currentUser.uid);
+        }
+
+        toast('Push notifications enabled!', 'success');
+      } else {
+        setPushStatus('Blocked');
+        toast('Notification permission denied by user', 'error');
+      }
+    } catch (e) {
+      toast('Failed to request notification permission', 'error');
+    }
+  };
+
+  const handleTestNotification = async () => {
+    const summary = getDueRemindersSummary(state.students, state.batches || [], state.contracts, state.payments);
+    const body = `${summary.classesToday} classes scheduled today. ${summary.pendingFees} pending fees.`;
+    const sent = await sendLocalReminderNotification('Tuitrix Reminder', body);
+    if (sent) {
+      toast('Test notification sent', 'success');
+    } else {
+      toast('Could not send notification. Ensure they are enabled.', 'error');
+    }
   };
 
 
@@ -453,6 +506,55 @@ export const SettingsView: React.FC = () => {
               <p className="muted small">Login or create an account to use the built-in AI credits, or use your own API keys below.</p>
             </div>
           )}
+        </div>
+
+        {/* Notifications & Reminders Card */}
+        <div className="card">
+          <h2>Push Notifications & Daily Reminders</h2>
+          <p className="muted small" style={{ marginBottom: '12px' }}>
+            Receive automated push notifications for daily classes and pending tuition fees.
+          </p>
+
+          <div className="form" style={{ marginBottom: '16px' }}>
+            <div className="field">
+              <label>Status: <strong>{pushStatus}</strong></label>
+              {pushStatus !== 'Enabled' && (
+                <button type="button" onClick={handleEnablePushNotifications} className="btn primary small" style={{ marginTop: '8px' }}>
+                  Enable Push Notifications
+                </button>
+              )}
+            </div>
+
+            {pushStatus === 'Enabled' && (
+              <>
+                <label className="checkbox" style={{ marginTop: '12px' }}>
+                  <input type="checkbox" checked={notificationsEnabled} onChange={e => setNotificationsEnabled(e.target.checked)} />
+                  Master Toggle: Enable Daily Notifications
+                </label>
+
+                {notificationsEnabled && (
+                  <div style={{ marginLeft: '24px', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                    <label className="checkbox">
+                      <input type="checkbox" checked={feeReminderNotifications} onChange={e => setFeeReminderNotifications(e.target.checked)} />
+                      Pending Fee Reminders
+                    </label>
+                    <label className="checkbox">
+                      <input type="checkbox" checked={classReminderNotifications} onChange={e => setClassReminderNotifications(e.target.checked)} />
+                      Daily Class Schedule Reminders
+                    </label>
+                  </div>
+                )}
+
+                <button type="button" onClick={handleTestNotification} className="btn outline small" style={{ marginTop: '16px', display: 'block' }}>
+                  🔔 Send Test Reminder
+                </button>
+              </>
+            )}
+
+            {(notificationsEnabled || feeReminderNotifications || classReminderNotifications) && (
+               <button type="button" onClick={handleSaveProfile} className="btn primary small" style={{ marginTop: '16px' }}>Save Notification Preferences</button>
+            )}
+          </div>
         </div>
 
         {/* Profile Card */}

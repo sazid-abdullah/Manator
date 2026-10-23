@@ -1,0 +1,19 @@
+{
+  "packageId": "com.tuitrix.app",
+  "host": "tuitrix.com",
+  "name": "Tuitrix — Smart Tuition & Batch Manager",
+  "launcherName": "Tuitrix",
+  "display": "standalone",
+  "themeColor": "#0f1115",
+  "navigationColor": "#0f1115",
+  "navigationColorDark": "#0f1115",
+  "navigationDividerColor": "#0f1115",
+  "navigationDividerColorDark": "#0f1115",
+  "backgroundColor": "#0f1115",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://tuitrix.com/icons/icon.svg",
+  "splashScreenFadeOutDuration": 300,
+  "sortBrowserVersion": 90,
+  "fallbackType": "customtabs"
+}
