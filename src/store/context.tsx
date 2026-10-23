@@ -72,6 +72,7 @@ interface StoreContextType {
     homework?: string;
     notes?: string;
     attendance: Record<string, Lesson['status']>; // studentId -> status
+    batchSessionId?: string;
   }) => void;
   deleteLesson: (id: string) => void;
   savePayment: (payment: Omit<Payment, 'id'> & { id?: string }) => string;
@@ -358,6 +359,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     homework?: string;
     notes?: string;
     attendance: Record<string, Lesson['status']>; // studentId -> status
+    batchSessionId?: string;
   }) => {
     const batchSessionId = opts.batchSessionId || uid();
     const now = new Date().toISOString();

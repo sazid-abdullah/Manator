@@ -79,6 +79,7 @@ export interface Payment {
   studentId: string;
   contractId?: string | null;
   amount: number;
+  planTerm?: 'monthly' | 'yearly';
   date: string; // YYYY-MM-DD
   method?: string;
   note?: string;
@@ -207,6 +208,7 @@ export interface TrxUpgradeRequest {
   senderPhone: string;
   trxId: string;
   amount: number;
+  planTerm?: 'monthly' | 'yearly';
   status: 'pending' | 'approved' | 'rejected';
   createdAt: string;
   reviewedAt?: string;
@@ -238,6 +240,17 @@ export interface AppState {
   goals: Goal[];
   exams: Exam[];
   attempts: Attempt[];
+}
+
+
+export interface PricingConfig {
+  monthlyPrice: number;
+  yearlyPrice: number;
+  bkashNumber: string;
+  nagadNumber: string;
+  rocketNumber: string;
+  promoText: string;
+  updatedAt: number;
 }
 
 export interface ToastMessage {
