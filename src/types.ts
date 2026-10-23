@@ -79,6 +79,8 @@ export interface Payment {
   studentId: string;
   contractId?: string | null;
   amount: number;
+  discountApplied?: number;
+  promoCodeUsed?: string;
   planTerm?: 'monthly' | 'yearly';
   date: string; // YYYY-MM-DD
   method?: string;
@@ -191,6 +193,9 @@ export interface AppSettings {
   tutorName: string;
   currency: string;
   lastBackup?: string | null;
+}
+
+export interface TutorProfile {
   credentials?: string;
   brandTitle?: string;
   showPrintHeader?: boolean;
@@ -233,6 +238,7 @@ export interface AppState {
   isAdmin?: boolean;
   role?: string;
   settings: AppSettings;
+  profile?: TutorProfile;
   ai: AIState;
   students: Student[];
   batches?: Batch[];
@@ -244,6 +250,7 @@ export interface AppState {
   goals: Goal[];
   exams: Exam[];
   attempts: Attempt[];
+  promoCodes?: { code: string; discountType: 'flat' | 'percent'; value: number }[];
 }
 
 

@@ -18,16 +18,17 @@ export const SettingsView: React.FC = () => {
     loadDemoData,
     eraseAllData,
     exportBackup,
+    updateProfile,
     importBackup,
     downloadFile,
     toast,
   } = useStore();
 
   const [tutorName, setTutorName] = useState(state.settings.tutorName || '');
-  const [credentials, setCredentials] = useState(state.settings.credentials || '');
-  const [brandTitle, setBrandTitle] = useState(state.settings.brandTitle || '');
-  const [showPrintHeader, setShowPrintHeader] = useState(state.settings.showPrintHeader ?? true);
-  const [showPrintWatermark, setShowPrintWatermark] = useState(state.settings.showPrintWatermark ?? true);
+  const [credentials, setCredentials] = useState(state.profile?.credentials || '');
+  const [brandTitle, setBrandTitle] = useState(state.profile?.brandTitle || '');
+  const [showPrintHeader, setShowPrintHeader] = useState(state.profile?.showPrintHeader ?? true);
+  const [showPrintWatermark, setShowPrintWatermark] = useState(state.profile?.showPrintWatermark ?? true);
   const [currency, setCurrency] = useState(state.settings.currency || '৳');
   const [provider, setProvider] = useState(state.ai.provider);
   const [apiKey, setApiKey] = useState(state.ai.keys[provider] || '');
@@ -104,6 +105,8 @@ export const SettingsView: React.FC = () => {
     updateSettings({
       tutorName: tutorName.trim(),
       currency,
+    });
+    updateProfile({
       credentials: credentials.trim(),
       brandTitle: brandTitle.trim(),
       showPrintHeader,

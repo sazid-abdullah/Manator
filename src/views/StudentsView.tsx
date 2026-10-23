@@ -25,6 +25,7 @@ export function scheduleSummary(s: Student): string {
 }
 
 import { BatchModal } from '../components/BatchModal';
+import { BatchFeeModal } from '../components/BatchFeeModal';
 
 export const StudentsView: React.FC<StudentsViewProps> = ({
   onNavigate,
@@ -37,6 +38,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState<any>(null);
+
+  const [batchFeeModalOpen, setBatchFeeModalOpen] = useState(false);
+  const [feeBatch, setFeeBatch] = useState<any>(null);
 
   const q = search.toLowerCase();
   const list = state.students
@@ -200,6 +204,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                     >
                       Log Batch Class
                     </button>
+                    <button className="btn sm primary outline" onClick={() => { setFeeBatch(b); setBatchFeeModalOpen(true); }}>
+                      Collect Batch Fees
+                    </button>
                     <button className="btn sm" onClick={() => { setEditingBatch(b); setBatchModalOpen(true); }}>
                       Edit Batch
                     </button>
@@ -216,6 +223,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           isOpen={batchModalOpen}
           batch={editingBatch}
           onClose={() => setBatchModalOpen(false)}
+        />
+      )}
+
+      {batchFeeModalOpen && (
+        <BatchFeeModal
+          isOpen={batchFeeModalOpen}
+          batch={feeBatch}
+          onClose={() => setBatchFeeModalOpen(false)}
         />
       )}
     </div>

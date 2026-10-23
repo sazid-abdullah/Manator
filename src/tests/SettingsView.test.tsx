@@ -4,7 +4,7 @@
 import { expect } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, vi, beforeEach } from 'vitest';
 import { SettingsView } from '../views/SettingsView';
 import * as context from '../store/context';
@@ -31,6 +31,7 @@ vi.mock('../services/ai', async (importOriginal) => {
 
 const mockState = {
   settings: { tutorName: '', currency: '৳' },
+  profile: { credentials: '', brandTitle: '', showPrintHeader: true, showPrintWatermark: true },
   ai: {
     provider: 'gemini',
     keys: { gemini: '' },
@@ -43,6 +44,7 @@ const mockStore = {
   state: mockState,
   billingState: null,
   updateSettings: vi.fn(),
+  updateProfile: vi.fn(),
   updateAI: vi.fn(),
   loadDemoData: vi.fn(),
   eraseAllData: vi.fn(),
@@ -63,8 +65,10 @@ describe('SettingsView AI Configuration', () => {
     return render(<SettingsView />);
   };
 
-  it('renders a select dropdown for models with Auto default', () => {
-    renderWithStore();
+  it('renders a select dropdown for models with Auto default', async () => {
+    await act(async () => {
+      renderWithStore();
+    });
     const select = screen.getByRole('combobox', { name: /Model/i });
     expect(select).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Auto default/i })).toBeInTheDocument();
@@ -79,7 +83,9 @@ describe('SettingsView AI Configuration', () => {
       tier: 'free'
     });
 
-    renderWithStore();
+    await act(async () => {
+      renderWithStore();
+    });
 
     const apiKeyInput = screen.getAllByPlaceholderText(/Paste your Google Gemini API key/i)[0];
     fireEvent.change(apiKeyInput, { target: { value: 'test-api-key' } });
@@ -97,7 +103,9 @@ describe('SettingsView AI Configuration', () => {
       tier: 'free'
     });
 
-    renderWithStore();
+    await act(async () => {
+      renderWithStore();
+    });
 
     const button = screen.getAllByRole('button', { name: /Refresh model list/i })[0];
     fireEvent.click(button);
@@ -110,7 +118,9 @@ describe('SettingsView AI Configuration', () => {
   it('gracefully falls back when fetchModelList fails', async () => {
     (aiServices.fetchModelList as any).mockRejectedValue(new Error('API failed'));
 
-    renderWithStore();
+    await act(async () => {
+      renderWithStore();
+    });
 
     const button = screen.getAllByRole('button', { name: /Refresh model list/i })[0];
     fireEvent.click(button);

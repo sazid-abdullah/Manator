@@ -12,6 +12,7 @@ function defaultState(): AppState {
   return {
     version: STORE_VERSION,
     settings: { tutorName: '', currency: '৳', lastBackup: null },
+    profile: { credentials: '', brandTitle: '', showPrintHeader: true, showPrintWatermark: true },
     ai: { provider: 'gemini', models: {}, keys: {} },
     students: [],
     batches: [],
@@ -23,6 +24,7 @@ function defaultState(): AppState {
     goals: [],
     exams: [],
     attempts: [],
+    promoCodes: [],
   };
 }
 
@@ -35,8 +37,10 @@ function loadState(): AppState {
       ...defaultState(),
       ...parsed,
       settings: { ...defaultState().settings, ...(parsed.settings || {}) },
+      profile: { ...defaultState().profile, ...(parsed.profile || {}) },
       ai: { ...defaultState().ai, ...(parsed.ai || {}) },
       batches: Array.isArray(parsed.batches) ? parsed.batches : [],
+      promoCodes: Array.isArray(parsed.promoCodes) ? parsed.promoCodes : [],
     };
   } catch (e) {
     console.error('Failed to load state', e);
@@ -90,6 +94,7 @@ interface StoreContextType {
   saveAttempt: (attempt: Attempt) => void;
   deleteAttempt: (id: string) => void;
   updateSettings: (settings: Partial<AppState['settings']>) => void;
+  updateProfile: (profile: Partial<AppState['profile']>) => void;
   updateAI: (ai: Partial<AppState['ai']>) => void;
   loadDemoData: () => void;
   eraseAllData: () => void;
@@ -143,6 +148,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           if (docSnap.exists()) {
             let remoteState = docSnap.data() as AppState;
+            remoteState = {
+              ...defaultState(),
+              ...remoteState,
+              settings: { ...defaultState().settings, ...(remoteState.settings || {}) },
+              profile: { ...defaultState().profile, ...(remoteState.profile || {}) },
+              ai: { ...defaultState().ai, ...(remoteState.ai || {}) },
+              batches: Array.isArray(remoteState.batches) ? remoteState.batches : [],
+              promoCodes: Array.isArray(remoteState.promoCodes) ? remoteState.promoCodes : [],
+            };
             if (isOwner && (!remoteState.isOwner || !remoteState.isAdmin || remoteState.role !== 'owner')) {
                remoteState = { ...remoteState, isOwner: true, isAdmin: true, role: 'owner' };
                await setDoc(docRef, remoteState);
@@ -578,6 +592,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setState(prev => ({ ...prev, settings: { ...prev.settings, ...settings } }));
   }, []);
 
+  const updateProfile = useCallback((profile: Partial<AppState['profile']>) => {
+    setState(prev => ({ ...prev, profile: { ...prev.profile, ...profile } }));
+  }, []);
+
   const updateAI = useCallback((ai: Partial<AppState['ai']>) => {
     setState(prev => ({ ...prev, ai: { ...prev.ai, ...ai } }));
   }, []);
@@ -677,12 +695,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...defaultState(),
       ...data,
       settings: { ...defaultState().settings, ...(data.settings || {}) },
+      profile: { ...defaultState().profile, ...(data.profile || {}) },
       ai: {
         ...defaultState().ai,
         ...(data.ai || {}),
         keys: Object.keys(data.ai?.keys || {}).length ? data.ai.keys : currentKeys,
       },
       batches: Array.isArray(data.batches) ? data.batches : [],
+      promoCodes: Array.isArray(data.promoCodes) ? data.promoCodes : [],
     });
   }, [state.ai.keys]);
 
@@ -734,6 +754,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       saveAttempt,
       deleteAttempt,
       updateSettings,
+      updateProfile,
       updateAI,
       loadDemoData,
       eraseAllData,
