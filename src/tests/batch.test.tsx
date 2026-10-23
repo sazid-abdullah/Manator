@@ -89,8 +89,8 @@ describe('Batch and Group Tuition Operations', () => {
     const lessons = result.current.state.lessons;
     expect(lessons.length).toBe(2);
 
-    const lesson1 = lessons.find(l => l.studentId === student1Id);
-    const lesson2 = lessons.find(l => l.studentId === student2Id);
+    const lesson1 = lessons.find((l: any) => l.studentId === student1Id);
+    const lesson2 = lessons.find((l: any) => l.studentId === student2Id);
 
     expect(lesson1).toBeDefined();
     expect(lesson1?.status).toBe('taught');
@@ -125,10 +125,10 @@ describe('Batch and Group Tuition Operations', () => {
     const payments = result.current.state.payments;
     expect(payments.length).toBe(2);
 
-    const p1 = payments.find(p => p.studentId === student1Id);
+    const p1 = payments.find((p: any) => p.studentId === student1Id);
     expect(p1?.amount).toBe(1000);
 
-    const p2 = payments.find(p => p.studentId === student2Id);
+    const p2 = payments.find((p: any) => p.studentId === student2Id);
     expect(p2?.amount).toBe(1500);
     expect(p2?.discountApplied).toBe(50);
     expect(p2?.promoCodeUsed).toBe('TEST50');

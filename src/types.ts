@@ -273,3 +273,10 @@ export interface ToastMessage {
 }
 
 export type SyncStatus = 'local' | 'syncing' | 'synced' | 'offline' | 'error';
+
+export interface DailyAiAdUsage {
+  date: string; // YYYY-MM-DD in local time
+  adsWatchedToday: number; // Max 5 per day on Free Tier
+  requestsUsedToday: number; // Max 5 per day on Free Tier
+  unlockedCredits: number; // Earned by watching an ad (1 ad = +1 credit), decremented (-1) when an AI request is sent
+}
