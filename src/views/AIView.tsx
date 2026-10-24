@@ -19,7 +19,8 @@ import {
 } from '../services/ai';
 import { fmtDate, uid, todayISO } from '../utils/date';
 import { SavedDoc, SavedAiResource } from '../types';
-import { isProUser, FREE_TIER_MAX_SAVED_RESOURCES } from '../utils/tierLimits';
+import { isProUser, FREE_TIER_MAX_SAVED_RESOURCES, getDailyAiQuotaState } from '../utils/tierLimits';
+import { RewardedAdModal } from '../components/RewardedAdModal';
 
 interface AIViewProps {
   initialTool?: string;
@@ -59,9 +60,9 @@ export const AIView: React.FC<AIViewProps> = ({
   onUploadPaper,
   onImportDoc,
 }) => {
-  const { state, billingState, saveDoc, deleteDoc, studentName, toast, saveAiResource, deleteAiResource, toggleFavoriteAiResource } = useStore();
+  const { state, updateSettings, billingState, toast, saveDoc, deleteDoc, studentName, saveAiResource, deleteAiResource, toggleFavoriteAiResource, setState } = useStore();
   const [currentTool, setCurrentTool] = useState<string>(initialTool);
-  const isPro = isProUser(billingState, state.settings.tutorName); // Note: Assuming we should really pass user email instead of tutorName but using what we have in context
+  const isPro = isProUser(billingState, state.settings.tutorName);
   const [studentId, setStudentId] = useState(initialStudentId);
 
   // Form states
@@ -149,14 +150,62 @@ export const AIView: React.FC<AIViewProps> = ({
     toast(`Added ${unique.length} topic(s) from class log`, 'success');
   };
 
+  const [rewardModalOpen, setRewardModalOpen] = useState(false);
+
+  const quota = getDailyAiQuotaState(state.dailyAiUsage, todayISO());
+  const hasKey = state.ai.provider === 'ollama' || !!(state.ai.keys[state.ai.provider] && state.ai.keys[state.ai.provider].trim());
+  const canUseAI = hasKey || isPro || quota.remainingToday > 0 || quota.adCreditsAvailable > 0;
+
+  const consumeAiCredit = () => {
+    if (hasKey || isPro) return; // Unmetered
+    setState(s => {
+       const currentUsage = s.dailyAiUsage?.date === todayISO() ? s.dailyAiUsage : { date: todayISO(), adsWatchedToday: 0, requestsUsedToday: 0, unlockedCredits: 0 };
+
+       let newUnlocked = currentUsage.unlockedCredits;
+       let newUsed = currentUsage.requestsUsedToday;
+
+       if (newUnlocked > 0) {
+         newUnlocked--;
+       } else {
+         newUsed++;
+       }
+
+       return {
+         ...s,
+         dailyAiUsage: {
+           ...currentUsage,
+           unlockedCredits: newUnlocked,
+           requestsUsedToday: newUsed
+         }
+       };
+    });
+  };
+
+  const handleRewardEarned = () => {
+    setState(s => {
+       const currentUsage = s.dailyAiUsage?.date === todayISO() ? s.dailyAiUsage : { date: todayISO(), adsWatchedToday: 0, requestsUsedToday: 0, unlockedCredits: 0 };
+       return {
+         ...s,
+         dailyAiUsage: {
+           ...currentUsage,
+           adsWatchedToday: currentUsage.adsWatchedToday + 1,
+           unlockedCredits: currentUsage.unlockedCredits + 1
+         }
+       };
+    });
+    toast('Unlocked 1 AI Request!', 'success');
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
 
-    const key = state.ai.keys[state.ai.provider];
-    if (state.ai.provider !== 'ollama' && (!key || !key.trim())) {
-      toast('Please set up your AI API key in Settings first', 'error');
-      onNavigate('settings');
+    if (!canUseAI) {
+      if (quota.canWatchAd) {
+         setRewardModalOpen(true);
+      } else {
+         toast('Daily Free AI limit reached. Add your own API key or upgrade to Pro.', 'error');
+      }
       return;
     }
 
@@ -201,6 +250,7 @@ export const AIView: React.FC<AIViewProps> = ({
           : worksheetPrompt(formParams);
 
       const generated = cleanDoc(await callAI(AI_SYSTEM, promptText, state, { onFallback: (msg) => toast(msg, 'info') }));
+      consumeAiCredit();
 
       const newResult = {
         tool: currentTool,
@@ -1071,6 +1121,18 @@ export const AIView: React.FC<AIViewProps> = ({
         </div>
       )}
 
+      {!hasKey && !isPro && (
+        <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="badge blue">Free AI Credits: {quota.remainingToday + quota.adCreditsAvailable} remaining today</span>
+          {quota.remainingToday === 0 && quota.canWatchAd && (
+             <button className="btn outline small" onClick={() => setRewardModalOpen(true)}>🎁 Watch Ad for 1 Credit</button>
+          )}
+          {quota.remainingToday === 0 && !quota.canWatchAd && quota.adCreditsAvailable === 0 && (
+             <span className="muted small">Daily ad limit reached. Come back tomorrow or upgrade!</span>
+          )}
+        </div>
+      )}
+
       {/* Modal for viewing a saved document */}
       {viewingDoc && (
         <div id="modal-root">
@@ -1179,6 +1241,8 @@ export const AIView: React.FC<AIViewProps> = ({
           </div>
         </div>
       )}
+
+      <RewardedAdModal isOpen={rewardModalOpen} onClose={() => setRewardModalOpen(false)} onRewardEarned={handleRewardEarned} />
     </div>
   );
 };

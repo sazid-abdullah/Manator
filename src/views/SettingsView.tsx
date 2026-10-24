@@ -7,6 +7,7 @@ import { auth, submitTrxUpgradeRequest, fetchPendingUpgradeRequests, reviewUpgra
 import { isOwnerEmail } from '../utils/auth';
 import { TrxUpgradeRequest, PricingConfig } from '../types';
 import { requestNotificationPermission, sendLocalReminderNotification, getDueRemindersSummary } from '../services/notifications';
+import { ApkShareModal } from '../components/ApkShareModal';
 
 const CURRENCIES = ['৳', '₹', 'Rs ', '$', '£', '€', 'RM ', 'SAR '];
 
@@ -53,6 +54,7 @@ export const SettingsView: React.FC = () => {
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [eraseConfirmOpen, setEraseConfirmOpen] = useState(false);
   const [demoConfirmOpen, setDemoConfirmOpen] = useState(false);
+  const [apkModalOpen, setApkModalOpen] = useState(false);
   const [availableModels, setAvailableModels] = useState<{id: string, name: string}[]>([]);
   const [modelsLoadedMsg, setModelsLoadedMsg] = useState('');
   const apiKeyTimeout = useRef<number | null>(null);
@@ -565,6 +567,32 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* Appearance Settings */}
+        <div className="card">
+          <h2>Appearance</h2>
+          <div className="form">
+            <label className="field">
+              Theme
+              <div className="seg" style={{ display: 'inline-flex', alignSelf: 'flex-start', marginTop: '4px' }}>
+                <button
+                  type="button"
+                  className={state.settings.theme === 'light' ? 'active' : ''}
+                  onClick={() => updateSettings({ theme: 'light' })}
+                >
+                  ☀️ Light Mode
+                </button>
+                <button
+                  type="button"
+                  className={state.settings.theme !== 'light' ? 'active' : ''}
+                  onClick={() => updateSettings({ theme: 'dark' })}
+                >
+                  🌙 Dark Mode
+                </button>
+              </div>
+            </label>
+          </div>
+        </div>
+
         {/* Profile Card */}
         <div className="card">
           <h2>Tutor Profile</h2>
@@ -772,6 +800,17 @@ export const SettingsView: React.FC = () => {
           </label>
         </div>
 
+        {/* Android App & Share */}
+        <div className="card">
+          <h2>📲 Android App & Share QR Code</h2>
+          <p className="muted small" style={{ marginBottom: '12px' }}>
+            Install the Tuitrix Android app directly or share a QR code for your students and fellow tutors to scan.
+          </p>
+          <button className="btn primary" onClick={() => setApkModalOpen(true)}>
+            📱 Get Android APK / Scan QR
+          </button>
+        </div>
+
         {/* Publishing & Monetization Guide */}
         <div className="card">
           <h2>Publishing & Monetization Architecture</h2>
@@ -835,6 +874,8 @@ export const SettingsView: React.FC = () => {
         }}
         onClose={() => setDemoConfirmOpen(false)}
       />
+
+      <ApkShareModal isOpen={apkModalOpen} onClose={() => setApkModalOpen(false)} />
     </div>
   );
 };

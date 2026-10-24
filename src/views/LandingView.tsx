@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PricingConfig } from '../types';
 import { fetchPricingConfig } from '../services/firebase';
+import { ApkShareModal } from '../components/ApkShareModal';
 
 interface LandingViewProps {
   onEnterApp: () => void;
@@ -13,6 +14,28 @@ export const LandingView: React.FC<LandingViewProps> = ({ onEnterApp, onSignIn }
   const [cycleClicks, setCycleClicks] = useState(11);
   const [showEnReport, setShowEnReport] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig | null>(null);
+
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [apkModalOpen, setApkModalOpen] = useState(false);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('tuitrix_theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') setTheme(savedTheme);
+  }, []);
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+    localStorage.setItem('tuitrix_theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    if (newTheme === 'light') {
+      document.body.classList.add('light-theme');
+      document.body.classList.remove('dark-theme');
+    } else {
+      document.body.classList.add('dark-theme');
+      document.body.classList.remove('light-theme');
+    }
+  };
 
   useEffect(() => {
     fetchPricingConfig().then(config => setPricingConfig(config)).catch(() => {});
@@ -40,6 +63,9 @@ export const LandingView: React.FC<LandingViewProps> = ({ onEnterApp, onSignIn }
           <span className="brand-name">Tuitrix</span>
         </div>
         <div className="landing-nav">
+          <button className="lang-toggle" onClick={toggleTheme} title="Toggle Theme" style={{ padding: '6px' }}>
+            {theme === 'light' ? '🌙' : '☀️'}
+          </button>
           <button className="lang-toggle" onClick={() => setLang(lang === 'EN' ? 'BN' : 'EN')}>
             {lang === 'EN' ? 'বাংলা' : 'English'}
           </button>
@@ -68,11 +94,13 @@ export const LandingView: React.FC<LandingViewProps> = ({ onEnterApp, onSignIn }
               🔑 {lang === 'EN' ? 'Sign In / Create Cloud Account' : 'লগইন / নতুন একাউন্ট'}
             </button>
           </div>
-          <div className="pwa-badge">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M17.5 14.5L12 20l-5.5-5.5.9-.9 3.6 3.6V3h2v14.2l3.6-3.6.9.9z" />
-            </svg>
-            📲 {lang === 'EN' ? 'Install Android / PWA App' : 'অ্যান্ড্রয়েড অ্যাপ ইনস্টল করুন'}
+          <div style={{ marginTop: '20px' }}>
+            <button className="btn outline" onClick={() => setApkModalOpen(true)} style={{ background: 'var(--surface)', borderColor: 'var(--green)', color: 'var(--green)' }}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style={{ marginRight: '6px' }}>
+                <path d="M17.5 14.5L12 20l-5.5-5.5.9-.9 3.6 3.6V3h2v14.2l3.6-3.6.9.9z" />
+              </svg>
+              📱 {lang === 'EN' ? 'Get Android APK / Scan QR' : 'অ্যান্ড্রয়েড অ্যাপ / কিউআর কোড'}
+            </button>
           </div>
         </div>
       </section>
@@ -264,6 +292,8 @@ export const LandingView: React.FC<LandingViewProps> = ({ onEnterApp, onSignIn }
           </div>
         </div>
       </footer>
+
+      <ApkShareModal isOpen={apkModalOpen} onClose={() => setApkModalOpen(false)} />
     </div>
   );
 };

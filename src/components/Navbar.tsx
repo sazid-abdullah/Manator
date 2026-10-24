@@ -10,7 +10,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLoginClick }) => {
-  const { billingState, syncStatus, lastSyncedAt } = useStore();
+  const { state, updateSettings, billingState, syncStatus, lastSyncedAt } = useStore();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -213,6 +213,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+          <button
+            onClick={() => updateSettings({ theme: state.settings.theme === 'light' ? 'dark' : 'light' })}
+            className="icon-btn"
+            title={state.settings.theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            style={{ padding: '4px', fontSize: '1.2rem', marginRight: '4px' }}
+          >
+            {state.settings.theme === 'light' ? '🌙' : '☀️'}
+          </button>
+
           {syncStatus === 'synced' && (
             <span className="badge green hide-mobile" title={lastSyncedAt ? `Last synced: ${new Date(lastSyncedAt).toLocaleTimeString()}` : 'Synced to cloud'}>☁️ Synced</span>
           )}

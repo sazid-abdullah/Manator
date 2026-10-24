@@ -11,7 +11,7 @@ const STORE_VERSION = 1;
 function defaultState(): AppState {
   return {
     version: STORE_VERSION,
-    settings: { tutorName: '', currency: '৳', lastBackup: null },
+    settings: { tutorName: '', currency: '৳', lastBackup: null, theme: 'dark' },
     profile: { credentials: '', brandTitle: '', showPrintHeader: true, showPrintWatermark: true },
     ai: { provider: 'gemini', models: {}, keys: {} },
     students: [],
@@ -32,12 +32,25 @@ function defaultState(): AppState {
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return defaultState();
+    if (!raw) {
+      const def = defaultState();
+      const savedTheme = localStorage.getItem('tuitrix_theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        def.settings.theme = savedTheme;
+      }
+      return def;
+    }
     const parsed = JSON.parse(raw);
+    const loadedSettings = { ...defaultState().settings, ...(parsed.settings || {}) };
+    const savedTheme = localStorage.getItem('tuitrix_theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      loadedSettings.theme = savedTheme;
+    }
+
     return {
       ...defaultState(),
       ...parsed,
-      settings: { ...defaultState().settings, ...(parsed.settings || {}) },
+      settings: loadedSettings,
       profile: { ...defaultState().profile, ...(parsed.profile || {}) },
       ai: { ...defaultState().ai, ...(parsed.ai || {}) },
       batches: Array.isArray(parsed.batches) ? parsed.batches : [],
@@ -116,6 +129,20 @@ const StoreContext = createContext<StoreContextType | null>(null);
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(loadState);
   const [isStateLoaded, setIsStateLoaded] = useState(false);
+
+  // Apply theme on load and change
+  useEffect(() => {
+    const theme = state.settings.theme || 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    if (theme === 'light') {
+      document.body.classList.add('light-theme');
+      document.body.classList.remove('dark-theme');
+    } else {
+      document.body.classList.add('dark-theme');
+      document.body.classList.remove('light-theme');
+    }
+    localStorage.setItem('tuitrix_theme', theme);
+  }, [state.settings.theme]);
   const [billingState, setBillingState] = useState<BillingState | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('local');
@@ -658,7 +685,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const updateSettings = useCallback((settings: Partial<AppState['settings']>) => {
-    setState(prev => ({ ...prev, settings: { ...prev.settings, ...settings } }));
+    setState(prev => {
+      if (settings.theme) {
+        localStorage.setItem('tuitrix_theme', settings.theme);
+      }
+      return { ...prev, settings: { ...prev.settings, ...settings } };
+    });
   }, []);
 
   const updateProfile = useCallback((profile: Partial<AppState['profile']>) => {
