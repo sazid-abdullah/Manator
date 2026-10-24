@@ -18,7 +18,16 @@ vi.mock('../services/firebase', () => ({
 }));
 
 vi.mock('../store/context', () => ({
-  useStore: vi.fn(),
+  useStore: vi.fn(() => ({
+    state: { settings: { theme: 'dark' } },
+    updateSettings: vi.fn(),
+    billingState: null,
+    isStateLoaded: true,
+    syncStatus: 'local',
+    toasts: [],
+    toast: vi.fn(),
+    dismissToast: vi.fn(),
+  })),
 }));
 
 describe('AuthModal Forgot Password Flow', () => {
@@ -59,8 +68,14 @@ describe('AuthModal Forgot Password Flow', () => {
 describe('Navbar Sync Status Badge', () => {
   const renderNavbarWithStatus = (syncStatus: string, lastSyncedAt?: string) => {
     (storeContext.useStore as any).mockReturnValue({
+      state: { settings: { theme: 'dark' }, students: [], batches: [], contracts: [], payments: [] },
+      updateSettings: vi.fn(),
       billingState: null,
+      isStateLoaded: true,
       syncStatus,
+      toasts: [],
+      toast: vi.fn(),
+      dismissToast: vi.fn(),
       lastSyncedAt
     });
 

@@ -71,8 +71,7 @@ export const sendLocalReminderNotification = async (title: string, body: string,
           body,
           icon: '/icons/icon.svg',
           tag: tag || 'tuitrix-reminder',
-          vibrate: [200, 100, 200],
-        });
+        } as any);
         return true;
       }
     }

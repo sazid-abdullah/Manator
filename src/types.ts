@@ -218,6 +218,7 @@ export interface AppSettings {
   tutorName: string;
   currency: string;
   lastBackup?: string | null;
+  theme?: 'dark' | 'light';
 }
 
 export interface TutorProfile {
@@ -281,6 +282,7 @@ export interface AppState {
   exams: Exam[];
   attempts: Attempt[];
   promoCodes?: { code: string; discountType: 'flat' | 'percent'; value: number }[];
+  dailyAiUsage?: DailyAiAdUsage;
 }
 
 

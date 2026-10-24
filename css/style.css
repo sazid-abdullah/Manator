@@ -1,4 +1,4 @@
-:root {
+:root, [data-theme="dark"] {
   --bg: #0f1115;
   --surface: #161922;
   --card: #1b1f2a;
@@ -18,6 +18,34 @@
   --radius-sm: 9px;
   --top-h: 60px;
   --bottom-h: 64px;
+
+  --chart-gradient: linear-gradient(135deg, #2a3b7a, #0b6b3a);
+  --modal-backdrop: rgba(0, 0, 0, 0.6);
+  --exam-done-bg: #0b6b3a;
+  --topbar-bg: rgba(15, 17, 21, 0.92);
+}
+
+[data-theme="light"] {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --card2: #f0f2f5;
+  --border: #d1d5db;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --green: #059669;
+  --green-soft: rgba(5, 150, 105, 0.1);
+  --red: #dc2626;
+  --red-soft: rgba(220, 38, 38, 0.1);
+  --yellow: #d97706;
+  --yellow-soft: rgba(217, 119, 6, 0.1);
+
+  --chart-gradient: linear-gradient(135deg, #e0e7ff, #dcfce7);
+  --modal-backdrop: rgba(0, 0, 0, 0.4);
+  --exam-done-bg: #059669;
+  --topbar-bg: rgba(255, 255, 255, 0.92);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,7 +75,7 @@ h3 { font-size: 1rem; }
   height: var(--top-h);
   display: flex; align-items: center; gap: 24px;
   padding: 0 20px;
-  background: rgba(15, 17, 21, 0.92);
+  background: var(--topbar-bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
@@ -69,7 +97,7 @@ h3 { font-size: 1rem; }
     position: fixed; inset: auto 0 0 0;
     height: calc(var(--bottom-h) + env(safe-area-inset-bottom));
     padding: 6px 4px env(safe-area-inset-bottom);
-    background: rgba(15, 17, 21, 0.97);
+    background: var(--topbar-bg);
     border-top: 1px solid var(--border);
     justify-content: space-around; gap: 0;
   }
@@ -210,7 +238,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; accent-color: var(--a
 /* ── Modal & toast ─────────────────────────────── */
 #modal-root { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; }
 #modal-root[hidden] { display: none; }
-.modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+.modal-backdrop { position: absolute; inset: 0; background: var(--modal-backdrop); }
 .modal {
   position: relative; width: 100%; max-width: 560px; max-height: calc(100vh - 32px);
   overflow: auto; background: var(--surface); border: 1px solid var(--border);
@@ -293,8 +321,8 @@ body.exam-mode #topbar { display: none; }
 .exam-head h1 { font-size: 1.35rem; }
 .exam-time { margin-top: 8px; font-size: 0.9rem; opacity: 0.85; }
 .exam-sec { margin-bottom: 10px; }
-.exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: rgba(15, 17, 21, 0.96); border-top: 1px solid var(--border); }
-.exam-foot-in { max-width: 880px; margin: 0 auto; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 12px; border-radius: 10px; background: #0b6b3a; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.28); color: #fff; }
+.exam-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--topbar-bg); border-top: 1px solid var(--border); }
+.exam-foot-in { max-width: 880px; margin: 0 auto; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 12px; border-radius: 10px; background: var(--exam-done-bg); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.28); color: #fff; }
 .exam-submit { flex: 1; align-self: stretch; background: none; border: 0; border-radius: 8px; color: #fff; font-weight: 700; font-size: 1.05rem; cursor: pointer; }
 .exam-submit:hover { background: rgba(255, 255, 255, 0.08); }
 .exam-submit:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
@@ -313,13 +341,13 @@ body.exam-mode #topbar { display: none; }
 .exam-bm.on svg { fill: currentColor; }
 .exam-qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 8px; }
 .exam-qnum { position: relative; height: 44px; border: 1px solid var(--border); border-radius: 9px; background: var(--card2); font-weight: 600; cursor: pointer; }
-.exam-qnum.done { background: #0b6b3a; border-color: #0b6b3a; color: #fff; }
+.exam-qnum.done { background: var(--exam-done-bg); border-color: var(--exam-done-bg); color: #fff; }
 .exam-qnum.part { border-color: #3ecf8e; }
 .exam-qnum .flag { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
 .exam-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 0.85rem; color: var(--muted); }
 .exam-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .exam-legend .sw { width: 12px; height: 12px; border: 1px solid var(--border); border-radius: 3px; background: var(--card2); }
-.exam-legend .sw.done { background: #0b6b3a; border-color: #0b6b3a; }
+.exam-legend .sw.done { background: var(--exam-done-bg); border-color: var(--exam-done-bg); }
 .exam-legend .sw.part { border-color: #3ecf8e; }
 .exam-legend .sw.flagged { border: 0; border-radius: 50%; width: 8px; height: 8px; background: var(--yellow); }
 .exam-q { margin-bottom: 16px; padding: 20px; scroll-margin-top: 16px; }
@@ -379,7 +407,7 @@ body.exam-mode #toasts { bottom: 150px; }
 .ad-slot { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
 .ad-slot > div { flex: 1; min-width: 0; }
 .ad-tag { flex: none; padding: 1px 6px; border-radius: 4px; background: var(--yellow); color: #111; font-size: 0.7rem; font-weight: 700; }
-.ad-player .ad-creative { position: relative; display: grid; place-items: center; gap: 4px; min-height: 180px; padding: 24px; border-radius: var(--radius); background: linear-gradient(135deg, #2a3b7a, #0b6b3a); text-align: center; }
+.ad-player .ad-creative { position: relative; display: grid; place-items: center; gap: 4px; min-height: 180px; padding: 24px; border-radius: var(--radius); background: var(--chart-gradient); text-align: center; }
 .ad-player .ad-tag { position: absolute; top: 10px; left: 10px; }
 .ad-big { font-size: 1.6rem; font-weight: 800; }
 .ad-player .progress { margin-top: 12px; }
