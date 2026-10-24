@@ -324,8 +324,16 @@ export const SettingsView: React.FC = () => {
         <div>
           <h1>Settings</h1>
           <div className="sub">Tutor profile, AI engines, data backup & publishing setup</div>
+
+          <button className="btn outline" onClick={() => window.location.href = window.location.pathname + '?landing=1'}>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style={{marginRight: '8px'}}>
+              <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
+            </svg>
+            About Tuitrix
+          </button>
         </div>
       </div>
+
 
       <div className="grid">
         {/* Admin Dashboard */}

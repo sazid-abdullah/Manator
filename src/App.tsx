@@ -24,6 +24,7 @@ import { AIView } from './views/AIView';
 import { ExamView } from './views/ExamView';
 import { ResultView } from './views/ResultView';
 import { SettingsView } from './views/SettingsView';
+import { LandingView } from './views/LandingView';
 
 import { Student, Contract, Lesson, Payment, Expense, Goal, SavedDoc } from './types';
 import { fmtClock } from './utils/date';
@@ -34,6 +35,7 @@ export const App: React.FC = () => {
   // Route state parsed from location.hash
   const [route, setRoute] = useState<string>('home');
   const [routeParam, setRouteParam] = useState<string>('');
+
 
   const parseHash = () => {
     const h = window.location.hash.replace(/^#\/?/, '') || 'home';
@@ -118,6 +120,18 @@ export const App: React.FC = () => {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+  const [showLanding, setShowLanding] = useState<boolean>(false);
+
+  useEffect(() => {
+    const isFirstTime = localStorage.getItem('tuitrix_entered_app') !== 'true';
+    const query = new URLSearchParams(window.location.search);
+    const isLandingQuery = query.get('landing') === '1' || window.location.hash.includes('?landing=1');
+
+    if (isLandingQuery || (!isAuthenticated && isFirstTime)) {
+      setShowLanding(true);
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     let unsubscribe = () => {};
     if (auth) {
@@ -128,12 +142,42 @@ export const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+
+  const handleEnterApp = () => {
+    localStorage.setItem('tuitrix_entered_app', 'true');
+    setShowLanding(false);
+
+    // Remove ?landing=1 from URL if present
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('landing') === '1') {
+       window.history.replaceState(null, '', window.location.pathname);
+    }
+    if (window.location.hash.includes('?landing=1')) {
+       window.location.hash = window.location.hash.replace('?landing=1', '');
+    }
+  };
+
   const requiresOnboarding = isStateLoaded && isAuthenticated && (!state.profile || !state.profile.brandTitle);
 
   // Check for running exams
   const runningExam = state.attempts.find(
     a => a.status === 'running' && a.endsAt > Date.now()
   );
+
+  if (showLanding) {
+    return (
+      <>
+        <LandingView
+          onEnterApp={handleEnterApp}
+          onSignIn={() => {
+            handleEnterApp();
+            setAuthModalOpen(true);
+          }}
+        />
+        <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+      </>
+    );
+  }
 
   if (requiresOnboarding) {
     return (
