@@ -110,6 +110,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
         </svg>
       ),
     },
+
     {
       id: 'settings',
       label: 'Settings',
@@ -120,6 +121,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentRoute, onNavigate, onLogi
         </svg>
       ),
     },
+    {
+      id: 'landing',
+      label: 'About Tuitrix',
+      icon: (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
+        </svg>
+      ),
+    }
+
   ];
 
   return (

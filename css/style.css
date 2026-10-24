@@ -436,3 +436,422 @@ button.plan-opt { font: inherit; color: inherit; text-align: left; cursor: point
     padding: 20px;
   }
 }
+
+/* Landing Page Styles */
+.landing-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+.landing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.landing-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.landing-logo .brand-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.landing-nav {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+.lang-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.nav-signin {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+}
+.hero {
+  text-align: center;
+  padding: 60px 0;
+}
+.hero h1 {
+  font-size: 2.5rem;
+  line-height: 1.2;
+  margin-bottom: 20px;
+  color: var(--text);
+}
+.hero-sub {
+  font-size: 1.1rem;
+  color: var(--muted);
+  max-width: 700px;
+  margin: 0 auto 30px;
+  line-height: 1.6;
+}
+.hero-ctas {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-bottom: 30px;
+}
+.hero-ctas button {
+  padding: 12px 24px;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.cta-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.cta-secondary {
+  background: var(--card2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.pwa-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--green-soft);
+  color: var(--green);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+.showcase {
+  margin: 60px 0;
+}
+.showcase h2, .pricing-section h2, .testimonials h2, .faq-section h2 {
+  text-align: center;
+  margin-bottom: 30px;
+  font-size: 1.8rem;
+}
+.showcase-widget {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.showcase-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.showcase-tabs button {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 15px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+.showcase-tabs button.active {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+.showcase-content {
+  padding: 30px;
+  min-height: 250px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.cycle-demo, .whatsapp-demo, .ai-demo, .analytics-demo {
+  text-align: center;
+  width: 100%;
+}
+.cycle-bar-container {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 5px;
+  margin: 20px auto;
+  max-width: 300px;
+}
+.cycle-bar {
+  height: 10px;
+  background: var(--card2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.cycle-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+.cycle-text {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.demo-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cycle-alert {
+  margin-top: 15px;
+  color: var(--red);
+  background: var(--red-soft);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+}
+.wa-toggle {
+  margin-bottom: 15px;
+}
+.wa-toggle button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 15px;
+  cursor: pointer;
+}
+.wa-toggle button.active {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+.wa-bubble {
+  background: #075e54;
+  color: #fff;
+  padding: 15px;
+  border-radius: 15px;
+  border-top-left-radius: 0;
+  text-align: left;
+  max-width: 300px;
+  margin: 0 auto;
+}
+.wa-bubble pre {
+  font-family: inherit;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.ai-pdf-preview {
+  background: #fff;
+  color: #000;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 300px;
+  margin: 0 auto;
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.pdf-header {
+  border-bottom: 2px solid #ccc;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+.pdf-header h2 {
+  font-size: 1.2rem;
+  margin: 0 0 5px;
+  color: #000;
+}
+.pdf-header p {
+  font-size: 0.8rem;
+  color: #666;
+  margin: 0;
+}
+.ai-watermark {
+  margin-top: 20px;
+  font-size: 0.7rem;
+  color: #aaa;
+  text-align: right;
+  font-style: italic;
+}
+.chart-preview {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  height: 150px;
+  margin-bottom: 15px;
+}
+.chart-preview .bar {
+  width: 30px;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  position: relative;
+}
+.chart-preview .bar .tooltip {
+  display: none;
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.chart-preview .bar:hover .tooltip {
+  display: block;
+}
+.pricing-table {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.pricing-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 30px;
+  width: 100%;
+  max-width: 350px;
+  text-align: left;
+  position: relative;
+}
+.pricing-card.pro {
+  border-color: var(--yellow);
+  background: linear-gradient(180deg, var(--card) 0%, rgba(245, 196, 81, 0.05) 100%);
+}
+.pro-badge {
+  position: absolute;
+  top: -12px;
+  right: 20px;
+  background: var(--yellow);
+  color: #000;
+  font-weight: bold;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+}
+.pricing-card h3 {
+  font-size: 1.5rem;
+  margin-bottom: 10px;
+}
+.pricing-card .price {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+.pricing-card .price span {
+  font-size: 1rem;
+  color: var(--muted);
+  font-weight: normal;
+}
+.pricing-card ul {
+  list-style: none;
+  margin-bottom: 30px;
+}
+.pricing-card ul li {
+  margin-bottom: 10px;
+  padding-left: 24px;
+  position: relative;
+}
+.pricing-card ul li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  color: var(--green);
+}
+.pricing-card button {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  font-weight: bold;
+  cursor: pointer;
+  border: none;
+}
+.cta-outline {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+.payment-methods {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+.payment-methods span {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+}
+.bkash-badge { color: #e2136e; }
+.nagad-badge { color: #f26522; }
+.rocket-badge { color: #8c1515; }
+
+.testimonial-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+.testimonial-card {
+  background: var(--card);
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.testimonial-card p {
+  font-style: italic;
+  margin-bottom: 15px;
+  color: var(--text);
+}
+.testimonial-card .author {
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.faq-section {
+  max-width: 700px;
+  margin: 60px auto;
+}
+.faq-item {
+  margin-bottom: 20px;
+  background: var(--card);
+  padding: 20px;
+  border-radius: var(--radius);
+}
+.faq-item h4 {
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+
+.landing-footer {
+  border-top: 1px solid var(--border);
+  padding: 30px 0;
+  margin-top: 60px;
+}
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.footer-links button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: 15px;
+}
+.footer-links button:hover {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .hero h1 { font-size: 2rem; }
+  .hero-ctas { flex-direction: column; }
+  .pricing-table { flex-direction: column; }
+}
