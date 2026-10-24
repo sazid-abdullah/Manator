@@ -3,28 +3,53 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isOwner() {
-      return request.auth != null && request.auth.token.email.lower() == 'abdullahsazid109@gmail.com';
+      return request.auth != null
+        && 'email' in request.auth.token
+        && request.auth.token.email.lower() == 'abdullahsazid109@gmail.com';
     }
 
+    // Public pricing config (readable by everyone for Landing Page & Settings, writable only by Owner)
     match /app_config/{docId} {
       allow read: if true;
       allow write: if isOwner();
     }
 
+    // bKash / Nagad / Rocket TrxID Pro upgrade requests
     match /upgrade_requests/{docId} {
-      allow create, update: if request.auth != null && request.auth.uid == request.resource.data.uid;
-      allow read: if request.auth != null && (request.auth.uid == docId || request.auth.uid == resource.data.uid);
+      allow create, update: if request.auth != null && (request.auth.uid == docId || request.auth.uid == request.resource.data.uid);
+      allow read: if request.auth != null && (request.auth.uid == docId || (resource != null && request.auth.uid == resource.data.uid));
       allow read, write: if isOwner();
     }
 
+    // Phase 1 Multi-Tenant Tutor Path (/tutors/{tutorId} and all subcollections)
+    match /tutors/{tutorId}/data/billing {
+      allow read: if (request.auth != null && request.auth.uid == tutorId) || isOwner();
+      allow write: if isOwner() || (
+        request.auth != null
+        && request.auth.uid == tutorId
+        && (!('plan' in request.resource.data) || request.resource.data.plan == 'free' || (resource != null && request.resource.data.plan == resource.data.plan))
+      );
+    }
+
+    match /tutors/{tutorId}/{document=**} {
+      allow read, write: if (request.auth != null && request.auth.uid == tutorId) || isOwner();
+    }
+
+    // Legacy User Path (/users/{userId} for backward compatibility)
     match /users/{userId}/data/billing {
-      allow read: if request.auth != null && request.auth.uid == userId || isOwner();
-      allow write: if isOwner() || (request.auth != null && request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pendingRequest', 'updatedAt']));
+      allow read: if (request.auth != null && request.auth.uid == userId) || isOwner();
+      allow write: if isOwner() || (
+        request.auth != null
+        && request.auth.uid == userId
+        && (!('plan' in request.resource.data) || request.resource.data.plan == 'free' || (resource != null && request.resource.data.plan == resource.data.plan))
+      );
     }
+
     match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      allow read, write: if isOwner();
+      allow read, write: if (request.auth != null && request.auth.uid == userId) || isOwner();
     }
+
+    // Owner Admin full access fallback
     match /{document=**} {
       allow read, write: if isOwner();
     }
