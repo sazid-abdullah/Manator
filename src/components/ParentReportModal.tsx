@@ -52,6 +52,10 @@ export const ParentReportModal: React.FC<ParentReportModalProps> = ({ isOpen, on
 
     const lastClass = lessons.find(l => l.status === 'taught');
 
+    const latestExam = student.examScores && student.examScores.length > 0
+      ? [...student.examScores].sort((a, b) => b.date.localeCompare(a.date))[0]
+      : undefined;
+
     const text = generateWhatsAppMessage({
       studentName: student.name,
       lang: 'en',
@@ -61,7 +65,11 @@ export const ParentReportModal: React.FC<ParentReportModalProps> = ({ isOpen, on
       lastClassTopic: lastClass?.subject || lastClass?.topics || undefined,
       dueAmount: String(totalDue),
       tutorName: state.settings.tutorName || 'Tutor',
-      hasLastClass: !!lastClass
+      hasLastClass: !!lastClass,
+      latestExamResult: latestExam && latestExam.totalMarks > 0 ? {
+        title: latestExam.title,
+        percent: Math.round((latestExam.obtainedMarks / latestExam.totalMarks) * 100)
+      } : undefined
     });
 
     window.open(`https://wa.me/${d}?text=${encodeURIComponent(text)}`, '_blank');
@@ -111,6 +119,46 @@ export const ParentReportModal: React.FC<ParentReportModalProps> = ({ isOpen, on
             </div>
           </div>
         </div>
+
+        {student.examScores && student.examScores.length > 0 && (
+          <div style={{ marginBottom: '24px' }}>
+            <h3>Recent Exam Performance</h3>
+            <div className="card" style={{ marginTop: '12px', padding: 0, overflowX: 'auto' }}>
+              <table className="table" style={{ minWidth: '500px' }}>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Exam / Subject</th>
+                    <th>Marks</th>
+                    <th>Score (%)</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...student.examScores].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5).map(s => {
+                    const percent = s.totalMarks > 0 ? Math.round((s.obtainedMarks / s.totalMarks) * 100) : 0;
+                    return (
+                      <tr key={s.id}>
+                        <td>{fmtDate(s.date, { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                        <td>
+                          <strong>{s.title}</strong>
+                          {s.subject && <div className="small muted">{s.subject}</div>}
+                        </td>
+                        <td>{s.obtainedMarks} / {s.totalMarks}</td>
+                        <td>
+                          <span style={{ color: percent >= 80 ? 'var(--green-main)' : percent >= 60 ? 'var(--yellow-main)' : 'var(--red-main)', fontWeight: 'bold' }}>
+                            {percent}%
+                          </span>
+                        </td>
+                        <td>{s.remarks ? <span className="small">{s.remarks}</span> : <span className="muted">-</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         <div>
           <h3>Verified Attendance (Recent Classes)</h3>

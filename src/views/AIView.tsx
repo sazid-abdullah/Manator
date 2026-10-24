@@ -17,8 +17,9 @@ import {
   AI_PROVIDERS,
   autoModel,
 } from '../services/ai';
-import { fmtDate, uid } from '../utils/date';
-import { SavedDoc } from '../types';
+import { fmtDate, uid, todayISO } from '../utils/date';
+import { SavedDoc, SavedAiResource } from '../types';
+import { isProUser, FREE_TIER_MAX_SAVED_RESOURCES } from '../utils/tierLimits';
 
 interface AIViewProps {
   initialTool?: string;
@@ -33,7 +34,8 @@ const AI_TOOLS = {
   plan: 'Lesson plan',
   exam: 'Exam paper',
   worksheet: 'Worksheet',
-  saved: 'Saved library',
+  library: 'Saved Library',
+  saved: 'Old Legacy Docs',
   results: 'Exam results',
 };
 
@@ -57,8 +59,9 @@ export const AIView: React.FC<AIViewProps> = ({
   onUploadPaper,
   onImportDoc,
 }) => {
-  const { state, saveDoc, deleteDoc, studentName, toast } = useStore();
+  const { state, billingState, saveDoc, deleteDoc, studentName, toast, saveAiResource, deleteAiResource, toggleFavoriteAiResource } = useStore();
   const [currentTool, setCurrentTool] = useState<string>(initialTool);
+  const isPro = isProUser(billingState, state.settings.tutorName); // Note: Assuming we should really pass user email instead of tutorName but using what we have in context
   const [studentId, setStudentId] = useState(initialStudentId);
 
   // Form states
@@ -103,6 +106,11 @@ export const AIView: React.FC<AIViewProps> = ({
   const [docsFilterType, setDocsFilterType] = useState('');
   const [docsFilterStudent, setDocsFilterStudent] = useState('');
   const [viewingDoc, setViewingDoc] = useState<SavedDoc | null>(null);
+
+  // Library filters
+  const [libraryFilterSearch, setLibraryFilterSearch] = useState('');
+  const [libraryFilterType, setLibraryFilterType] = useState('');
+  const [libraryFilterFavorite, setLibraryFilterFavorite] = useState(false);
 
   // Print Settings
   const [printMarks, setPrintMarks] = useState('');
@@ -274,7 +282,28 @@ export const AIView: React.FC<AIViewProps> = ({
 
   const handleSaveResult = () => {
     if (!result || result.savedId) return;
-    const docId = uid();
+
+    // Enforce quota
+    const savedCount = (state.savedResources || []).length;
+    if (!isPro && savedCount >= FREE_TIER_MAX_SAVED_RESOURCES) {
+      toast(`Free Tier limit reached (${FREE_TIER_MAX_SAVED_RESOURCES} saved resources). Upgrade to Pro for unlimited saves.`, 'error');
+      return;
+    }
+
+    const resId = uid();
+    saveAiResource({
+      id: resId,
+      title: result.title,
+      type: result.tool,
+      classLevel: grade || 'Unspecified',
+      subject: subject || 'Unspecified',
+      topic: topic || topics || 'Unspecified',
+      content: result.content,
+      createdAt: new Date().toISOString()
+    });
+
+    // Also save to legacy docs for backwards compatibility with exams
+    const docId = resId;
     saveDoc({
       id: docId,
       type: result.tool as any,
@@ -283,8 +312,9 @@ export const AIView: React.FC<AIViewProps> = ({
       studentId: result.studentId || null,
       createdAt: new Date().toISOString(),
     });
-    setResult(prev => (prev ? { ...prev, savedId: docId } : null));
-    toast('Saved to your offline AI library', 'success');
+
+    setResult(prev => (prev ? { ...prev, savedId: resId } : null));
+    toast('💾 Saved to Resource Library', 'success');
   };
 
   const handlePrint = (title: string, md: string) => {
@@ -364,6 +394,34 @@ export const AIView: React.FC<AIViewProps> = ({
     .filter(a => !docsFilterStudent || a.studentId === docsFilterStudent)
     .sort((a, b) => b.startedAt - a.startedAt);
 
+  const libraryList = (state.savedResources || [])
+    .filter(r => !libraryFilterType || r.type === libraryFilterType)
+    .filter(r => !libraryFilterFavorite || r.isFavorite)
+    .filter(r => !libraryFilterSearch || [r.title, r.subject, r.topic, r.classLevel].some(f => f?.toLowerCase().includes(libraryFilterSearch.toLowerCase())))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const handleLoadLibraryResource = (r: SavedAiResource) => {
+    // Populate form fields
+    setGrade(r.classLevel);
+    setSubject(r.subject);
+    setTopic(r.topic);
+
+    // Switch to appropriate tool (use fallback if exact match not found, but it usually matches)
+    const nextTool = ['plan', 'exam', 'worksheet'].includes(r.type) ? r.type : 'plan';
+    setCurrentTool(nextTool);
+
+    // Set result directly without hitting API
+    setResult({
+      tool: r.type,
+      title: r.title,
+      content: r.content,
+      studentId: null,
+      savedId: r.id // Important so it knows it's already saved
+    });
+
+    toast('Library resource loaded into editor', 'success');
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -437,6 +495,82 @@ export const AIView: React.FC<AIViewProps> = ({
                       <span className="badge green">View score</span>
                     )}
                   </a>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : currentTool === 'library' ? (
+        <div>
+          <div className="toolbar" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Search title, subject, topic..."
+              value={libraryFilterSearch}
+              onChange={e => setLibraryFilterSearch(e.target.value)}
+              style={{ flex: 1, minWidth: '200px' }}
+            />
+            <select
+              value={libraryFilterType}
+              onChange={e => setLibraryFilterType(e.target.value)}
+              aria-label="Filter by Type"
+            >
+              <option value="">All types</option>
+              <option value="plan">Lesson plan</option>
+              <option value="exam">Exam paper</option>
+              <option value="worksheet">Worksheet</option>
+            </select>
+            <button
+              className={`btn ${libraryFilterFavorite ? 'primary' : 'ghost'}`}
+              onClick={() => setLibraryFilterFavorite(!libraryFilterFavorite)}
+              title="Show only favorites"
+            >
+              ⭐ Favorites
+            </button>
+          </div>
+          <div className="card">
+            <div className="list">
+              {libraryList.length === 0 ? (
+                <div className="empty">
+                  Nothing saved in your library yet. Generate a paper or lesson plan and click "Save to Resource Library"!
+                </div>
+              ) : (
+                libraryList.map(r => (
+                  <div key={r.id} className="row">
+                    <div className="grow">
+                      <div className="title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{r.title}</span>
+                        <span className="badge">{r.subject}</span>
+                        <span className="badge ghost">{AI_TOOLS[r.type as keyof typeof AI_TOOLS] || r.type}</span>
+                      </div>
+                      <div className="meta">
+                        {r.classLevel} • {r.topic} • {fmtDate(r.createdAt.split('T')[0])}
+                      </div>
+                    </div>
+                    <div className="actions" style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="btn icon ghost"
+                        onClick={() => toggleFavoriteAiResource(r.id)}
+                        title={r.isFavorite ? "Unfavorite" : "Favorite"}
+                      >
+                        {r.isFavorite ? '⭐' : '☆'}
+                      </button>
+                      <button
+                        className="btn primary sm outline"
+                        onClick={() => handleLoadLibraryResource(r)}
+                      >
+                        Load & Print
+                      </button>
+                      <button
+                        className="btn icon ghost"
+                        onClick={() => deleteAiResource(r.id)}
+                        style={{ color: 'var(--red-main)' }}
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
                 ))
               )}
             </div>

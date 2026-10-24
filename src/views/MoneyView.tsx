@@ -4,6 +4,7 @@ import { monthKey, todayISO, fmtMonth, fmtDate, parseISO, addMonths } from '../u
 import { moneySnapshot, contractStatus, goalPlan, MoneySnapshotResult } from '../store/contracts';
 import { callAI, MONEY_SYSTEM, moneyPrompt, renderMarkdown } from '../services/ai';
 import { Payment, Expense, Goal } from '../types';
+import { isProUser } from '../utils/tierLimits';
 
 interface MoneyViewProps {
   onNavigate: (route: string, param?: string) => void;
@@ -47,6 +48,20 @@ export const MoneyView: React.FC<MoneyViewProps> = ({
     .filter(x => x.st.balance > 0.005);
   const outstanding = dues.reduce((a, x) => a + x.st.balance, 0);
 
+  const activeContracts = state.contracts.filter(c => c.status !== 'ended');
+
+  // Calculate Batch vs 1-on-1 revenue logic for Collected this month
+  const paysBatch = pays.filter(p => {
+    const c = state.contracts.find(c => c.id === p.contractId);
+    if (!c) return false;
+    const s = state.students.find(st => st.id === c.studentId);
+    return !!s?.batchId;
+  }).reduce((a, p) => a + Number(p.amount || 0), 0);
+  const pays1on1 = income - paysBatch;
+
+  const batchPercent = income > 0 ? Math.round((paysBatch / income) * 100) : 0;
+  const on1Percent = income > 0 ? 100 - batchPercent : 0;
+
   const snap: MoneySnapshotResult = moneySnapshot(state);
 
   // 6 months bar chart
@@ -60,6 +75,9 @@ export const MoneyView: React.FC<MoneyViewProps> = ({
     exp: state.expenses.filter(x => monthKey(x.date) === k).reduce((a, x) => a + Number(x.amount || 0), 0),
   }));
   const maxBar = Math.max(1, ...series.map(x => Math.max(x.inc, x.exp)));
+
+  const { billingState, state: appState } = useStore();
+  const isPro = isProUser(billingState, appState.settings.tutorName);
 
   // Transactions list
   const transactions: Array<{
@@ -189,26 +207,79 @@ export const MoneyView: React.FC<MoneyViewProps> = ({
 
       <div className="stats">
         <div className="card stat">
-          <div className="label">Income</div>
+          <div className="label">Collected (This Month)</div>
           <div className="value pos">{money(income)}</div>
           <div className="hint">{pays.length} payment{pays.length === 1 ? '' : 's'}</div>
         </div>
         <div className="card stat">
-          <div className="label">Expenses</div>
-          <div className="value neg">{money(spent)}</div>
+          <div className="label">Pending Fees</div>
+          <div className={`value ${outstanding > 0 ? 'neg' : ''}`}>{money(outstanding)}</div>
+          <div className="hint">across {dues.length} contract{dues.length === 1 ? '' : 's'}</div>
+        </div>
+        <div className="card stat">
+          <div className="label">Expected (Active Contracts)</div>
+          <div className="value">{money(Math.round(snap.expected.total))}</div>
         </div>
         <div className="card stat">
           <div className="label">Net profit</div>
           <div className={`value ${income - spent >= 0 ? 'pos' : 'neg'}`}>{money(income - spent)}</div>
         </div>
-        <div className="card stat">
-          <div className="label">Outstanding now</div>
-          <div className={`value ${outstanding > 0 ? 'neg' : ''}`}>{money(outstanding)}</div>
-          <div className="hint">across {dues.length} contract{dues.length === 1 ? '' : 's'}</div>
-        </div>
       </div>
 
       <div className="grid-2 section">
+        <div className="card" style={{ position: 'relative' }}>
+          <h2>📊 Financial Analytics {isPro ? '' : <span className="badge warning">👑 PRO</span>}</h2>
+
+          <div style={{ marginBottom: '24px', opacity: isPro ? 1 : 0.4, pointerEvents: isPro ? 'auto' : 'none' }}>
+            <div className="title" style={{ marginBottom: '8px', fontWeight: 'bold' }}>Revenue Split (Collected)</div>
+            <div className="row">
+              <div className="grow">
+                <div className="title">Batch Tuition</div>
+                <div className="meta">{batchPercent}%</div>
+              </div>
+              <span className="nowrap pos">{money(paysBatch)}</span>
+            </div>
+            <div className="row">
+              <div className="grow">
+                <div className="title">1-on-1 Tuition</div>
+                <div className="meta">{on1Percent}%</div>
+              </div>
+              <span className="nowrap pos">{money(pays1on1)}</span>
+            </div>
+          </div>
+
+          <div style={{ opacity: isPro ? 1 : 0.4, pointerEvents: isPro ? 'auto' : 'none' }}>
+            <div className="title" style={{ marginBottom: '8px', fontWeight: 'bold' }}>6-Month Trend</div>
+            <div style={{ height: '150px', display: 'flex', alignItems: 'flex-end', gap: '8px', padding: '16px 0', borderBottom: '1px solid var(--border)' }}>
+              {series.map(s => {
+                const incHeight = Math.max(1, (s.inc / maxBar) * 100);
+                const expHeight = Math.max(1, (s.exp / maxBar) * 100);
+                return (
+                  <div key={s.k} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', gap: '2px', position: 'relative' }}>
+                    <div style={{ width: '100%', display: 'flex', alignItems: 'flex-end', gap: '2px', height: '100%' }}>
+                      <div
+                        title={`Income: ${money(s.inc)}`}
+                        style={{ flex: 1, height: `${incHeight}%`, background: 'var(--green-main)', borderRadius: '4px 4px 0 0', minHeight: '4px' }}
+                      />
+                      <div
+                        title={`Expense: ${money(s.exp)}`}
+                        style={{ flex: 1, height: `${expHeight}%`, background: 'var(--red-main)', borderRadius: '4px 4px 0 0', minHeight: '4px' }}
+                      />
+                    </div>
+                    <div className="meta" style={{ fontSize: '10px' }}>{parseISO(s.k + '-01').toLocaleDateString(undefined, { month: 'short' })}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {!isPro && (
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.7)', backdropFilter: 'blur(2px)' }}>
+              <div className="btn primary" onClick={() => onNavigate('settings')}>Unlock Pro Analytics</div>
+            </div>
+          )}
+        </div>
+
         {/* Typical month */}
         <div className="card">
           <h2>Your typical month</h2>

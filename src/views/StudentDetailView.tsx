@@ -3,11 +3,11 @@ import { useStore } from '../store/context';
 import { renderAvatar, statusBadge } from './HomeView';
 import { scheduleSummary } from './StudentsView';
 import { studentBalance, contractStatus, cycleLabel, describeNextDue } from '../store/contracts';
-import { fmtDate, fmtTime, toISO, fmtN } from '../utils/date';
+import { fmtDate, fmtTime, toISO, fmtN, todayISO } from '../utils/date';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { ParentReportModal } from '../components/ParentReportModal';
 import { generateWhatsAppMessage } from '../utils/whatsapp';
-import { Student, Lesson, Contract, Payment } from '../types';
+import { Student, Lesson, Contract, Payment, ExamScore } from '../types';
 
 interface StudentDetailViewProps {
   studentId: string;
@@ -30,11 +30,20 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
   onRecordPayment,
   onUploadPaper,
 }) => {
-  const { state, getStudent, money, deleteStudent, deleteContract, saveContract, saveStudent, toast } = useStore();
+  const { state, getStudent, money, deleteStudent, deleteContract, saveContract, saveStudent, toast, addExamScore, deleteExamScore } = useStore();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [contractToDelete, setContractToDelete] = useState<string | null>(null);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [waLang, setWaLang] = useState<'en' | 'bn'>('en');
+  const [scoreFormOpen, setScoreFormOpen] = useState(false);
+  const [scoreForm, setScoreForm] = useState<Partial<ExamScore>>({
+    title: '',
+    subject: '',
+    date: todayISO(),
+    obtainedMarks: 0,
+    totalMarks: 100,
+    remarks: ''
+  });
 
   const student = getStudent(studentId);
   if (!student) {
@@ -101,6 +110,27 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
     saveContract({ ...rest, status: 'active' });
     toast('Contract reopened', 'info');
   };
+
+  const handleSaveScore = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scoreForm.title || !scoreForm.subject || !scoreForm.date || scoreForm.obtainedMarks === undefined || !scoreForm.totalMarks) {
+      toast('Please fill all required fields', 'error');
+      return;
+    }
+
+    addExamScore(student.id, scoreForm as ExamScore);
+    setScoreFormOpen(false);
+    toast('Exam score logged successfully', 'success');
+  };
+
+  const examScores = student?.examScores || [];
+  const validScores = examScores.filter(s => s.totalMarks > 0).sort((a, b) => b.date.localeCompare(a.date));
+  const avgScore = validScores.length > 0
+    ? Math.round(validScores.reduce((sum, s) => sum + (s.obtainedMarks / s.totalMarks), 0) / validScores.length * 100)
+    : 0;
+  const highestScore = validScores.length > 0
+    ? Math.max(...validScores.map(s => Math.round((s.obtainedMarks / s.totalMarks) * 100)))
+    : 0;
 
   return (
     <div>
@@ -482,10 +512,127 @@ export const StudentDetailView: React.FC<StudentDetailViewProps> = ({
         )}
       </div>
 
+      <div className="section">
+        <h2>
+          📈 Exam Scores & Performance
+          <button className="btn sm outline" onClick={() => setScoreFormOpen(true)} style={{ float: 'right' }}>
+            Log Exam Score
+          </button>
+        </h2>
+
+        {scoreFormOpen && (
+          <div className="card" style={{ marginBottom: '16px', background: 'var(--bg)', border: '1px solid var(--border)' }}>
+            <h3>Log New Score</h3>
+            <form onSubmit={handleSaveScore}>
+              <div className="form-row" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <div className="field" style={{ flex: 1, minWidth: '200px' }}>
+                  <label>Exam Title *</label>
+                  <input type="text" value={scoreForm.title} onChange={e => setScoreForm({ ...scoreForm, title: e.target.value })} placeholder="e.g. Chapter 4 Quiz" required style={{ width: '100%' }} />
+                </div>
+                <div className="field" style={{ flex: 1, minWidth: '150px' }}>
+                  <label>Subject *</label>
+                  <input type="text" value={scoreForm.subject} onChange={e => setScoreForm({ ...scoreForm, subject: e.target.value })} placeholder="e.g. Math" required style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div className="form-row" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <div className="field" style={{ flex: 1, minWidth: '120px' }}>
+                  <label>Date *</label>
+                  <input type="date" value={scoreForm.date} onChange={e => setScoreForm({ ...scoreForm, date: e.target.value })} required style={{ width: '100%' }} />
+                </div>
+                <div className="field" style={{ flex: 1, minWidth: '80px' }}>
+                  <label>Obtained *</label>
+                  <input type="number" min="0" step="0.1" value={scoreForm.obtainedMarks} onChange={e => setScoreForm({ ...scoreForm, obtainedMarks: parseFloat(e.target.value) })} required style={{ width: '100%' }} />
+                </div>
+                <div className="field" style={{ flex: 1, minWidth: '80px' }}>
+                  <label>Total *</label>
+                  <input type="number" min="1" step="0.1" value={scoreForm.totalMarks} onChange={e => setScoreForm({ ...scoreForm, totalMarks: parseFloat(e.target.value) })} required style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div className="field" style={{ marginBottom: '16px' }}>
+                <label>Remarks</label>
+                <input type="text" value={scoreForm.remarks || ''} onChange={e => setScoreForm({ ...scoreForm, remarks: e.target.value })} placeholder="Optional notes" style={{ width: '100%' }} />
+              </div>
+              <div className="actions">
+                <button type="button" className="btn ghost" onClick={() => setScoreFormOpen(false)}>Cancel</button>
+                <button type="submit" className="btn primary">Save Score</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        <div className="grid-2" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+          <div className="card stat">
+            <div className="label">Average Score</div>
+            <div className="value pos">{avgScore}%</div>
+            <div className="hint">across {validScores.length} logged exams</div>
+          </div>
+          <div className="card stat">
+            <div className="label">Highest Score</div>
+            <div className="value">{highestScore}%</div>
+          </div>
+        </div>
+
+        {validScores.length > 1 && (
+          <div className="card" style={{ marginBottom: '16px', padding: '16px' }}>
+            <h3 style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-light)' }}>Performance Trend</h3>
+            <div style={{ height: '120px', display: 'flex', alignItems: 'flex-end', gap: '4px' }}>
+              {[...validScores].reverse().map(s => {
+                const percent = Math.round((s.obtainedMarks / s.totalMarks) * 100);
+                const height = Math.max(5, percent); // min height 5%
+                const color = percent >= 80 ? 'var(--green-main)' : percent >= 60 ? 'var(--yellow-main)' : 'var(--red-main)';
+                return (
+                  <div key={s.id} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                    <div style={{ fontSize: '10px', marginBottom: '4px', fontWeight: 'bold' }}>{percent}%</div>
+                    <div
+                      title={`${s.title} (${percent}%)`}
+                      style={{
+                        width: '100%',
+                        maxWidth: '40px',
+                        height: `${height}%`,
+                        background: color,
+                        borderRadius: '4px 4px 0 0',
+                        opacity: 0.8
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {validScores.length > 0 && (
+          <div className="card" style={{ marginBottom: '24px' }}>
+            <div className="list">
+              {validScores.map(s => {
+                const percent = Math.round((s.obtainedMarks / s.totalMarks) * 100);
+                return (
+                  <div key={s.id} className="row" style={{ display: 'flex', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div className="grow" style={{ flex: 1 }}>
+                      <div className="title" style={{ fontWeight: 'bold' }}>{s.title} <span className="badge" style={{ marginLeft: '8px' }}>{s.subject}</span></div>
+                      <div className="meta" style={{ fontSize: '12px', color: 'var(--text-light)' }}>{fmtDate(s.date)} {s.remarks && `• ${s.remarks}`}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', paddingRight: '12px' }}>
+                      <div className="title" style={{ fontWeight: 'bold', color: percent >= 80 ? 'var(--green-main)' : percent >= 60 ? 'var(--yellow-main)' : 'var(--red-main)' }}>
+                        {percent}%
+                      </div>
+                      <div className="meta" style={{ fontSize: '12px', color: 'var(--text-light)' }}>{s.obtainedMarks} / {s.totalMarks}</div>
+                    </div>
+                    <button className="btn sm ghost" onClick={() => deleteExamScore(student.id, s.id)} title="Delete" style={{ color: 'var(--red-main)', padding: '4px 8px' }}>
+                      Delete
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Exams & Attempts */}
       <div className="section">
         <h2>
-          Exams{' '}
+          Digital Exams{' '}
           <button className="btn sm" onClick={() => onUploadPaper(student.id)}>
             Upload question paper
           </button>
